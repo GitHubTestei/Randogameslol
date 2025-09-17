@@ -1,0 +1,131 @@
+-- LocalScript inside StarterPlayerScripts
+
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+
+-- Toggle states
+local autoPunch = false
+local autoSell = false
+
+-- RemoteEvent references (adjust names if yours differ)
+local remote = ReplicatedStorage:WaitForChild("RemoteEvent")
+
+-- GUI Setup
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "FightingSimGUI"
+ScreenGui.Parent = player:WaitForChild("PlayerGui")
+ScreenGui.ResetOnSpawn = false
+
+-- Main Frame
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 220, 0, 140)
+Frame.Position = UDim2.new(1, -240, 0, 20) -- Top right
+Frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0) -- Black
+Frame.BorderSizePixel = 0
+Frame.Active = true
+Frame.Draggable = true
+Frame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 12)
+UICorner.Parent = Frame
+
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundColor3 = Color3.fromRGB(25, 25, 112) -- Dark blue
+Title.Text = "Fighting Sim"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.SourceSansBold
+Title.TextSize = 18
+Title.Parent = Frame
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 12)
+TitleCorner.Parent = Title
+
+-- Auto Punch Button
+local AutoPunchBtn = Instance.new("TextButton")
+AutoPunchBtn.Size = UDim2.new(1, -20, 0, 36)
+AutoPunchBtn.Position = UDim2.new(0, 10, 0, 40)
+AutoPunchBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 128) -- Blue
+AutoPunchBtn.Text = "Auto Punch: OFF"
+AutoPunchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AutoPunchBtn.Font = Enum.Font.SourceSansBold
+AutoPunchBtn.TextSize = 16
+AutoPunchBtn.Parent = Frame
+
+local BtnCorner1 = Instance.new("UICorner")
+BtnCorner1.CornerRadius = UDim.new(0, 8)
+BtnCorner1.Parent = AutoPunchBtn
+
+-- Auto Sell Button
+local AutoSellBtn = Instance.new("TextButton")
+AutoSellBtn.Size = UDim2.new(1, -20, 0, 36)
+AutoSellBtn.Position = UDim2.new(0, 10, 0, 80)
+AutoSellBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 128) -- Blue
+AutoSellBtn.Text = "Auto Sell: OFF"
+AutoSellBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AutoSellBtn.Font = Enum.Font.SourceSansBold
+AutoSellBtn.TextSize = 16
+AutoSellBtn.Parent = Frame
+
+local BtnCorner2 = Instance.new("UICorner")
+BtnCorner2.CornerRadius = UDim.new(0, 8)
+BtnCorner2.Parent = AutoSellBtn
+
+-- Auto Punch loop (fires your punch remote when enabled)
+task.spawn(function()
+    while true do
+        if autoPunch then
+            -- original punch args
+            pcall(function()
+                remote:FireServer("v9hAW8OkuAI7VCfQfQ1Rd27nJvOBdz_1758076117","Punch2")
+            end)
+            task.wait(0.1) -- adjust rate as needed
+        else
+            task.wait(0.25)
+        end
+    end
+end)
+
+-- Auto Sell loop (fires your auto-sell remote when enabled)
+task.spawn(function()
+    while true do
+        if autoSell then
+            pcall(function()
+                -- your provided string (single argument)
+                remote:FireServer("s32w_vSAKgXqDFEmIZ9JjGTJpyHsc3_1758076117")
+            end)
+            task.wait(0.1) -- adjust rate as needed
+        else
+            task.wait(0.25)
+        end
+    end
+end)
+
+-- Button Toggle Functions
+AutoPunchBtn.MouseButton1Click:Connect(function()
+    autoPunch = not autoPunch
+    if autoPunch then
+        AutoPunchBtn.Text = "Auto Punch: ON"
+        AutoPunchBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 200)
+    else
+        AutoPunchBtn.Text = "Auto Punch: OFF"
+        AutoPunchBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 128)
+    end
+end)
+
+AutoSellBtn.MouseButton1Click:Connect(function()
+    autoSell = not autoSell
+    if autoSell then
+        AutoSellBtn.Text = "Auto Sell: ON"
+        AutoSellBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 200)
+    else
+        AutoSellBtn.Text = "Auto Sell: OFF"
+        AutoSellBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 128)
+    end
+end)
