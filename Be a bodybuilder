@@ -1,0 +1,159 @@
+--// LocalScript
+local player = game:GetService("Players").LocalPlayer
+local char = player.Character or player.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+
+-- Helper to fire TouchInterest
+local function fireTouch(part)
+    if part and part:IsA("BasePart") then
+        firetouchinterest(hrp, part, 0)
+        task.wait()
+        firetouchinterest(hrp, part, 1)
+    end
+end
+
+-- Toggle states
+local autoLevelRunning = false
+local moneyRunning = false
+local autoRebirthRunning = false
+local guiVisible = true
+
+-- GUI setup
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "[💪] Be a Bodybuilder"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- Main Frame
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 240, 0, 220)
+MainFrame.Position = UDim2.new(0, 50, 0, 50)
+MainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40) -- Grey
+MainFrame.BorderSizePixel = 0
+MainFrame.Parent = ScreenGui
+
+-- Rounded corners
+local Corner = Instance.new("UICorner")
+Corner.CornerRadius = UDim.new(0, 12)
+Corner.Parent = MainFrame
+
+-- Draggable
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.Position = UDim2.new(0, 0, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "💪 Be a Bodybuilder"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 18
+Title.Parent = MainFrame
+
+-- Button creation function (yellow buttons)
+local function createButton(text, yPos)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 200, 0, 40)
+    btn.Position = UDim2.new(0, 20, 0, yPos)
+    btn.BackgroundColor3 = Color3.fromRGB(255, 221, 51) -- Yellow
+    btn.BorderSizePixel = 0
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255) -- White text
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 16
+    btn.Parent = MainFrame
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = btn
+
+    return btn
+end
+
+-- Buttons
+local AutoLevelButton = createButton("Start Auto Level", 50)
+local MoneyButton = createButton("Start Inf Money", 100)
+local RebirthButton = createButton("Start Auto Rebirth", 150)
+
+-- Button toggle logic
+AutoLevelButton.MouseButton1Click:Connect(function()
+    autoLevelRunning = not autoLevelRunning
+    AutoLevelButton.Text = autoLevelRunning and "Stop Auto Level" or "Start Auto Level"
+end)
+
+MoneyButton.MouseButton1Click:Connect(function()
+    moneyRunning = not moneyRunning
+    MoneyButton.Text = moneyRunning and "Stop Inf Money" or "Start Inf Money"
+end)
+
+RebirthButton.MouseButton1Click:Connect(function()
+    autoRebirthRunning = not autoRebirthRunning
+    RebirthButton.Text = autoRebirthRunning and "Stop Auto Rebirth" or "Start Auto Rebirth"
+end)
+
+-- GUI Toggle Button (top-right, grey)
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Size = UDim2.new(0, 120, 0, 40)
+ToggleButton.Position = UDim2.new(1, -140, 0, 20) -- top-right corner
+ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40) -- grey like main GUI
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Text = "Toggle GUI"
+ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.TextSize = 16
+ToggleButton.Parent = ScreenGui
+
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(0, 8)
+ToggleCorner.Parent = ToggleButton
+
+-- Toggle GUI visibility
+ToggleButton.MouseButton1Click:Connect(function()
+    guiVisible = not guiVisible
+    MainFrame.Visible = guiVisible
+end)
+
+-- Auto Level loop
+task.spawn(function()
+    while true do
+        if autoLevelRunning then
+            for _, plot in ipairs(workspace:GetChildren()) do
+                if plot:FindFirstChild("Buttons") then
+                    local btns = plot.Buttons
+                    for _, name in ipairs({"PlateSize", "Speed", "PowerBurst"}) do
+                        local btn = btns:FindFirstChild(name)
+                        if btn then
+                            local touchPart = btn:FindFirstChildWhichIsA("TouchTransmitter") or btn:FindFirstChild("TouchInterest")
+                            if touchPart and touchPart.Parent then
+                                fireTouch(touchPart.Parent)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(0.1)
+    end
+end)
+
+-- Inf Money loop
+task.spawn(function()
+    while true do
+        if moneyRunning then
+            game:GetService("ReplicatedStorage").ShopBought:FireServer("Gravity", -9999999999999999)
+        end
+        task.wait(0.1)
+    end
+end)
+
+-- Auto Rebirth loop
+task.spawn(function()
+    while true do
+        if autoRebirthRunning then
+            game:GetService("ReplicatedStorage").RebirthEvent:FireServer(39062500,2999999999997501000)
+        end
+        task.wait(0.1)
+    end
+end)
