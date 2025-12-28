@@ -1,4 +1,4 @@
--- Studs Long Jump Obby (SLJO)
+-- credits to francy for helping
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -13,10 +13,15 @@ local rootPart = character:WaitForChild("HumanoidRootPart")
 local checkpointsFolder = workspace:WaitForChild("Checkpoints")
 local rebirthEvent = ReplicatedStorage:WaitForChild("RebirthEvent")
 
-if not firetouchinterest then
-    warn("firetouchinterest is not available in your executor!")
-    return
+local checkpoints = {}
+for i = 1, 45 do
+    local checkpoint = checkpointsFolder:FindFirstChild(tostring(i))
+    if checkpoint then
+        table.insert(checkpoints, checkpoint)
+    end
 end
+
+print("Checkpoints cargados: " .. #checkpoints)
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Parent = playerGui
@@ -24,56 +29,53 @@ screenGui.ResetOnSpawn = false
 
 local pauseButton = Instance.new("TextButton")
 pauseButton.Size = UDim2.new(0, 100, 0, 50)
-pauseButton.Position = UDim2.new(0, 10, 0, 10)  -- Top-left
+pauseButton.Position = UDim2.new(0, 10, 0, 10)  
 pauseButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 pauseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-pauseButton.Text = "Pause"
 pauseButton.TextScaled = true
 pauseButton.Font = Enum.Font.SourceSansBold
+pauseButton.Text = "Pause"
 pauseButton.Parent = screenGui
 
-local isPaused = false
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = pauseButton
+
+
+local isRunning = true
 local connection
 
-pauseButton.MouseButton1Click:Connect(function()
-    isPaused = not isPaused
-    if isPaused then
-        pauseButton.Text = "Play"
-        if connection then
-            connection:Disconnect()
-            connection = nil
+local function fastTeleport()
+    for _, checkpoint in ipairs(checkpoints) do
+        if not isRunning then return end  -- Check 
+        rootPart.CFrame = checkpoint.CFrame + Vector3.new(0, 3, 0)
+        if firetouchinterest then
+            firetouchinterest(rootPart, checkpoint, 0)
+            firetouchinterest(rootPart, checkpoint, 1)
+        end
+    end
+    if isRunning and rebirthEvent then
+        rebirthEvent:FireServer()
+    end
+end
+
+-- Start
+connection = RunService.Heartbeat:Connect(fastTeleport)
+
+-- Toggle 
+pauseButton.Activated:Connect(function()
+    isRunning = not isRunning
+    if isRunning then
+        pauseButton.Text = "Pause"
+        if not connection.Connected then
+            connection = RunService.Heartbeat:Connect(fastTeleport)
         end
     else
-        pauseButton.Text = "Pause"
-        connection = RunService.Heartbeat:Connect(function()
-            for i = 1, 45 do
-                local checkpointName = tostring(i)
-                local checkpointPart = checkpointsFolder:FindFirstChild(checkpointName)
-                
-                if checkpointPart then
-                    firetouchinterest(rootPart, checkpointPart, 0)  -- Start 
-                    firetouchinterest(rootPart, checkpointPart, 1)  -- End 
-                end
-            end
-            
-            rebirthEvent:FireServer()
-        end)
-    end
-end)
-
-pauseButton.Text = "Pause"
-connection = RunService.Heartbeat:Connect(function()
-    for i = 1, 45 do
-        local checkpointName = tostring(i)
-        local checkpointPart = checkpointsFolder:FindFirstChild(checkpointName)
-        
-        if checkpointPart then
-            firetouchinterest(rootPart, checkpointPart, 0)  -- Start 
-            firetouchinterest(rootPart, checkpointPart, 1)  -- End 
+        pauseButton.Text = "Play"
+        if connection.Connected then
+            connection:Disconnect()
         end
     end
-    
-    rebirthEvent:FireServer()
 end)
 
-print("SLJO console test")
+print("Auto-teleport started with pause button in top-left")
