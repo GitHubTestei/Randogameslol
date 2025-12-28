@@ -1,0 +1,34 @@
+-- Studs Long Jump Obby (SLJO)
+
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+local checkpointsFolder = workspace:WaitForChild("Checkpoints")
+local rebirthEvent = ReplicatedStorage:WaitForChild("RebirthEvent")
+
+if not firetouchinterest then
+    warn("firetouchinterest is not available in your executor!")
+    return
+end
+
+RunService.Heartbeat:Connect(function()
+    for i = 1, 45 do
+        local checkpointName = tostring(i)
+        local checkpointPart = checkpointsFolder:FindFirstChild(checkpointName)
+        
+        if checkpointPart then
+            firetouchinterest(rootPart, checkpointPart, 0)  -- Start 
+            firetouchinterest(rootPart, checkpointPart, 1)  -- End 
+        end
+    end
+    
+    rebirthEvent:FireServer()
+end)
+
+print("Ultra-fast checkpoint + rebirth loop started! (~60 FPS)")
