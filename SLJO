@@ -1,11 +1,12 @@
 -- Studs Long Jump Obby (SLJO)
 
-
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
 local character = player.Character or player.CharacterAdded:Wait()
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
@@ -17,7 +18,51 @@ if not firetouchinterest then
     return
 end
 
-RunService.Heartbeat:Connect(function()
+local screenGui = Instance.new("ScreenGui")
+screenGui.Parent = playerGui
+screenGui.ResetOnSpawn = false
+
+local pauseButton = Instance.new("TextButton")
+pauseButton.Size = UDim2.new(0, 100, 0, 50)
+pauseButton.Position = UDim2.new(0, 10, 0, 10)  -- Top-left
+pauseButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+pauseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+pauseButton.Text = "Pause"
+pauseButton.TextScaled = true
+pauseButton.Font = Enum.Font.SourceSansBold
+pauseButton.Parent = screenGui
+
+local isPaused = false
+local connection
+
+pauseButton.MouseButton1Click:Connect(function()
+    isPaused = not isPaused
+    if isPaused then
+        pauseButton.Text = "Play"
+        if connection then
+            connection:Disconnect()
+            connection = nil
+        end
+    else
+        pauseButton.Text = "Pause"
+        connection = RunService.Heartbeat:Connect(function()
+            for i = 1, 45 do
+                local checkpointName = tostring(i)
+                local checkpointPart = checkpointsFolder:FindFirstChild(checkpointName)
+                
+                if checkpointPart then
+                    firetouchinterest(rootPart, checkpointPart, 0)  -- Start 
+                    firetouchinterest(rootPart, checkpointPart, 1)  -- End 
+                end
+            end
+            
+            rebirthEvent:FireServer()
+        end)
+    end
+end)
+
+pauseButton.Text = "Pause"
+connection = RunService.Heartbeat:Connect(function()
     for i = 1, 45 do
         local checkpointName = tostring(i)
         local checkpointPart = checkpointsFolder:FindFirstChild(checkpointName)
@@ -31,4 +76,4 @@ RunService.Heartbeat:Connect(function()
     rebirthEvent:FireServer()
 end)
 
-print("Console logging test")
+print("SLJO console test")
