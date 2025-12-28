@@ -31,4 +31,4 @@ RunService.Heartbeat:Connect(function()
     rebirthEvent:FireServer()
 end)
 
-print("Ultra-fast checkpoint + rebirth loop started! (~60 FPS)")
+print("Console logging test")
