@@ -1,0 +1,193 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+local blinking = false
+local startCFrame = CFrame.new()
+local char = nil
+local hrp = nil
+local humanoid = nil
+local localHRP = nil
+local highlight = nil
+local resetConn = nil
+local moveConn = nil
+local keys = {w = false, a = false, s = false, d = false, e = false, q = false}
+local speed = 3.7
+local lastTime = tick()
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "BlinkGUI"
+screenGui.Parent = player.PlayerGui
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 120, 0, 40)
+frame.Position = UDim2.new(0, 15, 1, -55)
+frame.BackgroundColor3 = Color3.new(0, 0, 0)
+frame.BackgroundTransparency = 0.3
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
+
+local textLabel = Instance.new("TextLabel")
+textLabel.Size = UDim2.new(1, 0, 1, 0)
+textLabel.BackgroundTransparency = 1
+textLabel.Text = "blink: off"
+textLabel.TextColor3 = Color3.new(0, 1, 0)
+textLabel.TextScaled = true
+textLabel.Font = Enum.Font.GothamBold
+textLabel.Parent = frame
+
+local function onCharacterAdded(loadedChar)
+    char = loadedChar
+    hrp = char:WaitForChild("HumanoidRootPart")
+    humanoid = char:WaitForChild("Humanoid")
+    
+    if blinking then
+        blinking = false
+        textLabel.Text = "blink: off"
+        if localHRP then
+            localHRP:Destroy()
+            localHRP = nil
+        end
+        if highlight then
+            highlight:Destroy()
+            highlight = nil
+        end
+        if resetConn then
+            resetConn:Disconnect()
+            resetConn = nil
+        end
+        if moveConn then
+            moveConn:Disconnect()
+            moveConn = nil
+        end
+        camera.CameraSubject = humanoid
+    end
+end
+
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then
+    onCharacterAdded(player.Character)
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    local kc = input.KeyCode
+    if kc == Enum.KeyCode.R then
+        toggleBlink()
+    elseif kc == Enum.KeyCode.W then keys.w = true
+    elseif kc == Enum.KeyCode.A then keys.a = true
+    elseif kc == Enum.KeyCode.S then keys.s = true
+    elseif kc == Enum.KeyCode.D then keys.d = true
+    elseif kc == Enum.KeyCode.E then keys.e = true
+    elseif kc == Enum.KeyCode.Q then keys.q = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    local kc = input.KeyCode
+    if kc == Enum.KeyCode.W then keys.w = false
+    elseif kc == Enum.KeyCode.A then keys.a = false
+    elseif kc == Enum.KeyCode.S then keys.s = false
+    elseif kc == Enum.KeyCode.D then keys.d = false
+    elseif kc == Enum.KeyCode.E then keys.e = false
+    elseif kc == Enum.KeyCode.Q then keys.q = false
+    end
+end)
+
+local function updateMovement()
+    if not localHRP or not camera then return end
+    local dt = tick() - lastTime
+    lastTime = tick()
+    local moveVector = Vector3.new()
+    local camCF = camera.CFrame
+    
+    if keys.w then moveVector = moveVector + camCF.LookVector end
+    if keys.s then moveVector = moveVector - camCF.LookVector end
+    if keys.a then moveVector = moveVector - camCF.RightVector end
+    if keys.d then moveVector = moveVector + camCF.RightVector end
+    if keys.e then moveVector = moveVector + Vector3.new(0,1,0) end
+    if keys.q then moveVector = moveVector - Vector3.new(0,1,0) end
+    
+    if moveVector.Magnitude > 0 then
+        moveVector = moveVector.Unit * speed * dt * 60
+    end
+    
+    localHRP.CFrame = localHRP.CFrame + moveVector
+end
+
+function toggleBlink()
+    if not char or not hrp or not humanoid then return end
+    blinking = not blinking
+    
+    if blinking then
+        startCFrame = hrp.CFrame
+        
+        for _, obj in pairs(char:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                obj.LocalTransparencyModifier = 1
+            elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                obj.Transparency = 1
+            end
+        end
+        
+        highlight = Instance.new("Highlight")
+        highlight.Name = "BlinkOutline"
+        highlight.Adornee = char
+        highlight.FillTransparency = 1
+        highlight.OutlineTransparency = 0
+        highlight.OutlineColor = Color3.new(0, 1, 0)
+        highlight.Parent = char
+        
+        localHRP = Instance.new("Part")
+        localHRP.Name = "BlinkCam"
+        localHRP.Size = Vector3.new(4, 4, 1)
+        localHRP.Transparency = 1
+        localHRP.CanCollide = false
+        localHRP.Anchored = true
+        localHRP.CFrame = startCFrame
+        localHRP.Parent = camera
+        
+        camera.CameraSubject = localHRP
+        
+        lastTime = tick()
+        
+        resetConn = RunService.Heartbeat:Connect(function()
+            if hrp and hrp.Parent then
+                hrp.CFrame = startCFrame
+                hrp.AssemblyLinearVelocity = Vector3.new(0,0,0)
+                hrp.AssemblyAngularVelocity = Vector3.new(0,0,0)
+            end
+        end)
+        
+        moveConn = RunService.RenderStepped:Connect(updateMovement)
+        
+        textLabel.Text = "blink: on"
+    else
+        if resetConn then resetConn:Disconnect() end
+        if moveConn then moveConn:Disconnect() end
+        
+        if highlight then
+            highlight:Destroy()
+            highlight = nil
+        end
+        
+        for _, obj in pairs(char:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                obj.LocalTransparencyModifier = 0
+            elseif obj:IsA("Decal") or obj:IsA("Texture") then
+                obj.Transparency = 0
+            end
+        end
+        
+        if localHRP then
+            hrp.CFrame = localHRP.CFrame
+            localHRP:Destroy()
+            localHRP = nil
+        end
+        
+        camera.CameraSubject = humanoid
+        
+        textLabel.Text = "blink: off"
+    end
+end
