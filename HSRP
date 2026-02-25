@@ -384,10 +384,10 @@ do
         return slider
     end
 
-    -- (createTextInput, sections, hitbox loop, killaura code remains the same as your last working version)
+    -- (remains same)
 
     -- Features (adjusted sizes for smaller GUI)
-    local KillAuraSection = createSection("⚔️ KillAura", 1)
+    local KillAuraSection = createSection("KillAura", 1)
     KillAuraSection.Size = UDim2.new(1, 0, 0, 150)
 
     createToggle("KillAura Enabled", KillAuraSection, function(state)
@@ -399,7 +399,7 @@ do
 
     createSlider("Attacks/s", 1, 3000, 15, KillAuraSection, function(v) AttacksPerSecond = v end, 3)
 
-    local HitboxSection = createSection("🎯 Hitbox", 2)
+    local HitboxSection = createSection("Hitbox", 2)
     HitboxSection.Size = UDim2.new(1, 0, 0, 130)
 
     createToggle("Hitbox Enabled", HitboxSection, function(state)
@@ -414,7 +414,7 @@ do
         HitboxSize = v
     end, 3)
 
-    local RainbowSection = createSection("🌈 Rainbow Tag", 3)
+    local RainbowSection = createSection("Rainbow Tag", 3)
     RainbowSection.Size = UDim2.new(1, 0, 0, 90)
 
     createToggle("Rainbow Tag Enabled", RainbowSection, function(state)
@@ -422,7 +422,7 @@ do
         if state then startRainbow() else stopRainbow() end
     end, 1, "RainbowTag")
 
-    local FriendsSection = createSection("👥 Friends List", 4)
+    local FriendsSection = createSection("Friends List", 4)
     FriendsSection.Size = UDim2.new(1, 0, 0, 110)
 
     local friendsInfo = Instance.new("TextLabel")
