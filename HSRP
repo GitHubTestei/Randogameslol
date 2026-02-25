@@ -18,22 +18,26 @@ do
     local HitboxVisible = false
     local KillAuraEnabled = false
     local RainbowTagEnabled = false
+    local DeathTPEnabled = false
+    local AntiRagdollEnabled = false
+    local deathCFrame = nil
+
     local HitboxSize = 10
     local KillAuraRange = 20
     local AttacksPerSecond = 15
     local FriendsNamesList = {}
-    local FriendsNamesRaw = ""
 
     local Keybinds = {
         KillAura = nil,
         Hitbox = nil,
         HitboxVisible = nil,
         RainbowTag = nil,
+        DeathTP = nil,
+        AntiRagdoll = nil,
     }
 
     local ScriptUnloaded = false
 
-    -- Rainbow Tag variables
     local Remotes = ReplicatedStorage:WaitForChild("Remotes")
     local UpdateBio = Remotes:WaitForChild("UpdateBio")
     local UpdateBioColor = Remotes:WaitForChild("UpdateBioColor")
@@ -44,29 +48,23 @@ do
 
     local function startRainbow()
         if rainbowConnection then return end
-
         if not bioSet then
             UpdateBio:FireServer("")
             bioSet = true
         end
-
         local SPEED = 0.55
         local SATURATION = 0.65
         local VALUE = 0.98
         local accumulatedBio = 0
         local accumulatedRP = 0
         local PHASE_OFFSET = 0.22
-
         rainbowConnection = RunService.RenderStepped:Connect(function(dt)
             accumulatedBio = accumulatedBio + dt * SPEED
             accumulatedRP = accumulatedRP + dt * SPEED
-
             local hueBio = (accumulatedBio + PHASE_OFFSET) % 1
             local pastelBio = Color3.fromHSV(hueBio, SATURATION, VALUE)
-
             local hueRP = accumulatedRP % 1
             local pastelRP = Color3.fromHSV(hueRP, SATURATION, VALUE)
-
             UpdateBioColor:FireServer(pastelBio)
             UpdateRPColor:FireServer(pastelRP)
         end)
@@ -79,6 +77,64 @@ do
         end
     end
 
+    -- Improved Anti-Ragdoll Logic (Reversible)
+    local function handleRagdollLogic(character, state)
+        if not character then return end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        
+        if humanoid then
+            local badStates = {
+                Enum.HumanoidStateType.Ragdoll,
+                Enum.HumanoidStateType.Physics,
+                Enum.HumanoidStateType.FallingDown,
+                Enum.HumanoidStateType.PlatformStanding
+            }
+            for _, s in ipairs(badStates) do
+                -- If state is true, we DISABLE the ragdoll states. If state is false, we RE-ENABLE them.
+                pcall(function() humanoid:SetStateEnabled(s, not state) end)
+            end
+            if state then humanoid.PlatformStand = false end
+        end
+        
+        -- Handle Constraints and Motors
+        for _, obj in ipairs(character:GetDescendants()) do
+            if (obj:IsA("BaseConstraint") or obj:IsA("Attachment")) and obj.Name:lower():find("ragdoll") then
+                obj.Enabled = not state -- Disable instead of Destroy
+            elseif obj:IsA("Motor6D") then
+                if state then
+                    obj.Enabled = true -- Force motors on when Anti-Ragdoll is active
+                end
+            end
+        end
+    end
+
+    local function onCharacterAdded(char)
+        if not char then return end
+        local humanoid = char:WaitForChild("Humanoid", 8)
+        local hrp = char:WaitForChild("HumanoidRootPart", 8)
+        if not humanoid or not hrp then return end
+        
+        if DeathTPEnabled and deathCFrame then
+            task.wait(0.1)
+            hrp.CFrame = deathCFrame
+        end
+        
+        humanoid.Died:Connect(function()
+            if hrp and hrp.Parent then
+                deathCFrame = hrp.CFrame
+            end
+        end)
+
+        char.DescendantAdded:Connect(function()
+            if AntiRagdollEnabled then
+                handleRagdollLogic(char, true)
+            end
+        end)
+    end
+
+    LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
+    if LocalPlayer.Character then task.spawn(onCharacterAdded, LocalPlayer.Character) end
+
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "FXCKER"
     ScreenGui.ResetOnSpawn = false
@@ -87,16 +143,15 @@ do
 
     local MainFrame = Instance.new("Frame")
     MainFrame.Name = "Main"
-    MainFrame.Size = UDim2.new(0, 320, 0, 520)  -- much smaller, mobile-friendly
+    MainFrame.Size = UDim2.new(0, 320, 0, 520)
     MainFrame.Position = UDim2.new(0.5, -160, 0.5, -260)
     MainFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 14)
     MainFrame.BorderSizePixel = 0
-    MainFrame.Visible = true  -- change to false to start hidden
+    MainFrame.Visible = true
     MainFrame.ClipsDescendants = true
     MainFrame.Parent = ScreenGui
     Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
 
-    -- Top-right toggle button (small, always visible)
     local ToggleButton = Instance.new("TextButton")
     ToggleButton.Size = UDim2.new(0, 45, 0, 45)
     ToggleButton.Position = UDim2.new(1, -65, 0, 15)
@@ -112,61 +167,46 @@ do
     tbStroke.Color = Color3.fromRGB(100, 180, 255)
     tbStroke.Thickness = 2
 
-    ToggleButton.MouseButton1Click:Connect(function()
-        MainFrame.Visible = not MainFrame.Visible
-    end)
+    ToggleButton.MouseButton1Click:Connect(function() MainFrame.Visible = not MainFrame.Visible end)
 
-    -- Dragging (mouse + full touch/mobile support)
     local dragging, dragInput, dragStart, startPos
-
     local function updateDrag(input)
         local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
 
-    -- Start drag on mouse or touch
     MainFrame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or
-           input.UserInputType == Enum.UserInputType.Touch then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = MainFrame.Position
-
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
 
-    -- Update during drag (mouse movement or finger drag)
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or
-                         input.UserInputType == Enum.UserInputType.Touch) then
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             updateDrag(input)
         end
     end)
 
-    safeConnect(UserInputService.InputBegan, function(input)
-        if input.KeyCode == Enum.KeyCode.Insert then
-            MainFrame.Visible = not MainFrame.Visible
+    -- Toggle GUI Keybind (Insert and LeftControl)
+    safeConnect(UserInputService.InputBegan, function(input, gp)
+        if gp then return end
+        if input.KeyCode == Enum.KeyCode.Insert or input.KeyCode == Enum.KeyCode.LeftControl then 
+            MainFrame.Visible = not MainFrame.Visible 
         end
     end)
 
-    -- Content area (fits smaller GUI)
     local ContentArea = Instance.new("ScrollingFrame")
     ContentArea.Size = UDim2.new(1, -30, 1, -30)
     ContentArea.Position = UDim2.new(0, 15, 0, 15)
     ContentArea.BackgroundTransparency = 1
     ContentArea.ScrollBarThickness = 3
     ContentArea.ScrollBarImageColor3 = Color3.fromRGB(100, 180, 255)
-    ContentArea.CanvasSize = UDim2.new(0, 0, 0, 700)
+    ContentArea.CanvasSize = UDim2.new(0, 0, 0, 900)
     ContentArea.ZIndex = 2
     ContentArea.Parent = MainFrame
 
@@ -177,12 +217,10 @@ do
 
     local function createSection(name, order)
         local section = Instance.new("Frame")
-        section.Size = UDim2.new(0.94, 0, 0, 140)  -- adjusted for smaller GUI
         section.BackgroundTransparency = 1
         section.LayoutOrder = order
         section.ZIndex = 3
         section.Parent = ContentArea
-
         local title = Instance.new("TextLabel")
         title.Size = UDim2.new(1, 0, 0, 26)
         title.BackgroundTransparency = 1
@@ -193,8 +231,9 @@ do
         title.TextXAlignment = Enum.TextXAlignment.Left
         title.ZIndex = 4
         title.Parent = section
-
-        Instance.new("UIListLayout", section).Padding = UDim.new(0, 3)
+        local list = Instance.new("UIListLayout", section)
+        list.Padding = UDim.new(0, 3)
+        list.SortOrder = Enum.SortOrder.LayoutOrder
         return section
     end
 
@@ -207,7 +246,6 @@ do
         toggle.LayoutOrder = order
         toggle.ZIndex = 3
         toggle.Parent = parent
-
         local checkbox = Instance.new("TextButton")
         checkbox.Size = UDim2.new(0, 16, 0, 16)
         checkbox.Position = UDim2.new(0, 4, 0, 5)
@@ -217,7 +255,6 @@ do
         checkbox.Text = ""
         checkbox.ZIndex = 4
         checkbox.Parent = toggle
-
         local checkmark = Instance.new("TextLabel")
         checkmark.Size = UDim2.new(1, 0, 1, 0)
         checkmark.BackgroundTransparency = 1
@@ -227,7 +264,6 @@ do
         checkmark.Text = ""
         checkmark.ZIndex = 5
         checkmark.Parent = checkbox
-
         local label = Instance.new("TextLabel")
         label.Size = UDim2.new(1, -90, 1, 0)
         label.Position = UDim2.new(0, 24, 0, 0)
@@ -239,7 +275,6 @@ do
         label.TextXAlignment = Enum.TextXAlignment.Left
         label.ZIndex = 4
         label.Parent = toggle
-
         local bindBtn = Instance.new("TextButton")
         bindBtn.Size = UDim2.new(0, 45, 0, 18)
         bindBtn.Position = UDim2.new(1, -50, 0, 4)
@@ -252,32 +287,26 @@ do
         bindBtn.ZIndex = 4
         bindBtn.Parent = toggle
         Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 4)
-
         local enabled = false
         local waitingForKey = false
-
         local function setEnabled(state)
             enabled = state
             checkmark.Text = enabled and "✓" or ""
             checkbox.BackgroundColor3 = enabled and Color3.fromRGB(100,180,255) or Color3.fromRGB(30,30,30)
             if callback then callback(enabled) end
         end
-
         checkbox.MouseButton1Click:Connect(function() setEnabled(not enabled) end)
-
         bindBtn.MouseButton1Click:Connect(function()
             waitingForKey = true
             bindBtn.Text = "..."
             bindBtn.BackgroundColor3 = Color3.fromRGB(100,180,255)
         end)
-
         if keybindKey then
             ToggleCallbacks[keybindKey] = {
                 toggle = function() setEnabled(not enabled) end,
                 getKey = function() return Keybinds[keybindKey] end
             }
         end
-
         safeConnect(UserInputService.InputBegan, function(input, gp)
             if waitingForKey and input.UserInputType == Enum.UserInputType.Keyboard and not gp then
                 if input.KeyCode == Enum.KeyCode.Escape then
@@ -291,7 +320,6 @@ do
                 waitingForKey = false
             end
         end)
-
         return toggle
     end
 
@@ -302,7 +330,6 @@ do
         slider.LayoutOrder = order
         slider.ZIndex = 3
         slider.Parent = parent
-
         local label = Instance.new("TextLabel")
         label.Size = UDim2.new(1, -45, 0, 18)
         label.Position = UDim2.new(0, 4, 0, 0)
@@ -314,7 +341,6 @@ do
         label.TextXAlignment = Enum.TextXAlignment.Left
         label.ZIndex = 4
         label.Parent = slider
-
         local valueLabel = Instance.new("TextLabel")
         valueLabel.Size = UDim2.new(0, 35, 0, 18)
         valueLabel.Position = UDim2.new(1, -40, 0, 0)
@@ -325,7 +351,6 @@ do
         valueLabel.Text = tostring(default)
         valueLabel.ZIndex = 4
         valueLabel.Parent = slider
-
         local sliderBg = Instance.new("Frame")
         sliderBg.Size = UDim2.new(1, -10, 0, 5)
         sliderBg.Position = UDim2.new(0, 5, 0, 22)
@@ -333,14 +358,12 @@ do
         sliderBg.ZIndex = 4
         sliderBg.Parent = slider
         Instance.new("UICorner", sliderBg).CornerRadius = UDim.new(0, 3)
-
         local sliderFill = Instance.new("Frame")
         sliderFill.Size = UDim2.new((default - min)/(max - min), 0, 1, 0)
         sliderFill.BackgroundColor3 = Color3.fromRGB(100, 180, 255)
         sliderFill.ZIndex = 5
         sliderFill.Parent = sliderBg
         Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(0, 3)
-
         local sliderBtn = Instance.new("TextButton")
         sliderBtn.Size = UDim2.new(0, 12, 0, 12)
         sliderBtn.Position = UDim2.new((default - min)/(max - min), -6, 0.5, -6)
@@ -348,83 +371,61 @@ do
         sliderBtn.ZIndex = 6
         sliderBtn.Parent = sliderBg
         Instance.new("UICorner", sliderBtn).CornerRadius = UDim.new(1, 0)
-
-        local currentValue = default
-
         local function setValue(value)
             value = math.clamp(math.floor(value), min, max)
-            currentValue = value
             local pos = (value - min) / (max - min)
             sliderFill.Size = UDim2.new(pos, 0, 1, 0)
             sliderBtn.Position = UDim2.new(pos, -6, 0.5, -6)
             valueLabel.Text = tostring(value)
             callback(value)
         end
-
         local dragging = false
         sliderBtn.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = true
-            end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true end
         end)
-
         safeConnect(UserInputService.InputEnded, function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = false
-            end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
         end)
-
         safeConnect(UserInputService.InputChanged, function(input)
             if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                 local pos = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
                 setValue(min + (max - min) * pos)
             end
         end)
-
         return slider
     end
 
-    -- (remains same)
-
-    -- Features (adjusted sizes for smaller GUI)
     local KillAuraSection = createSection("KillAura", 1)
-    KillAuraSection.Size = UDim2.new(1, 0, 0, 150)
-
-    createToggle("KillAura Enabled", KillAuraSection, function(state)
-        KillAuraEnabled = state
-        if state then startKillAura() else stopKillAura() end
-    end, 1, "KillAura")
-
+    KillAuraSection.Size = UDim2.new(0.94, 0, 0, 150)
+    createToggle("KillAura Enabled", KillAuraSection, function(state) KillAuraEnabled = state if state then startKillAura() else stopKillAura() end end, 1, "KillAura")
     createSlider("KillAura Range", 5, 50, 20, KillAuraSection, function(v) KillAuraRange = v end, 2)
-
     createSlider("Attacks/s", 1, 3000, 15, KillAuraSection, function(v) AttacksPerSecond = v end, 3)
 
     local HitboxSection = createSection("Hitbox", 2)
-    HitboxSection.Size = UDim2.new(1, 0, 0, 130)
-
-    createToggle("Hitbox Enabled", HitboxSection, function(state)
-        HitboxEnabled = state
-    end, 1, "Hitbox")
-
-    createToggle("Hitbox Visible", HitboxSection, function(state)
-        HitboxVisible = state
-    end, 2, "HitboxVisible")
-
-    createSlider("Hitbox Size", 1, 50, 10, HitboxSection, function(v)
-        HitboxSize = v
-    end, 3)
+    HitboxSection.Size = UDim2.new(0.94, 0, 0, 130)
+    createToggle("Hitbox Enabled", HitboxSection, function(state) HitboxEnabled = state end, 1, "Hitbox")
+    createToggle("Hitbox Visible", HitboxSection, function(state) HitboxVisible = state end, 2, "HitboxVisible")
+    createSlider("Hitbox Size", 1, 50, 10, HitboxSection, function(v) HitboxSize = v end, 3)
 
     local RainbowSection = createSection("Rainbow Tag", 3)
-    RainbowSection.Size = UDim2.new(1, 0, 0, 90)
+    RainbowSection.Size = UDim2.new(0.94, 0, 0, 90)
+    createToggle("Rainbow Tag Enabled", RainbowSection, function(state) RainbowTagEnabled = state if state then startRainbow() else stopRainbow() end end, 1, "RainbowTag")
 
-    createToggle("Rainbow Tag Enabled", RainbowSection, function(state)
-        RainbowTagEnabled = state
-        if state then startRainbow() else stopRainbow() end
-    end, 1, "RainbowTag")
+    local DeathTPSection = createSection("Death TP", 4)
+    DeathTPSection.Size = UDim2.new(0.94, 0, 0, 60)
+    createToggle("Death TP Enabled", DeathTPSection, function(state) DeathTPEnabled = state if not state then deathCFrame = nil end end, 1, "DeathTP")
 
-    local FriendsSection = createSection("Friends List", 4)
-    FriendsSection.Size = UDim2.new(1, 0, 0, 110)
+    local AntiRagdollSection = createSection("Anti Ragdoll (BUGGY)", 5)
+    AntiRagdollSection.Size = UDim2.new(0.94, 0, 0, 60)
+    createToggle("Anti Ragdoll Enabled", AntiRagdollSection, function(state) 
+        AntiRagdollEnabled = state 
+        if LocalPlayer.Character then 
+            handleRagdollLogic(LocalPlayer.Character, state) 
+        end 
+    end, 1, "AntiRagdoll")
 
+    local FriendsSection = createSection("Friends List", 6)
+    FriendsSection.Size = UDim2.new(0.94, 0, 0, 110)
     local friendsInfo = Instance.new("TextLabel")
     friendsInfo.Size = UDim2.new(1, -10, 0, 16)
     friendsInfo.BackgroundTransparency = 1
@@ -435,14 +436,12 @@ do
     friendsInfo.TextXAlignment = Enum.TextXAlignment.Left
     friendsInfo.ZIndex = 4
     friendsInfo.Parent = FriendsSection
-
     local friendsBox = Instance.new("Frame")
     friendsBox.Size = UDim2.new(1, -10, 0, 32)
     friendsBox.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
     friendsBox.ZIndex = 4
     friendsBox.Parent = FriendsSection
     Instance.new("UICorner", friendsBox).CornerRadius = UDim.new(0, 6)
-
     local friendsLabel = Instance.new("TextLabel")
     friendsLabel.Size = UDim2.new(0, 70, 1, 0)
     friendsLabel.Position = UDim2.new(0, 8, 0, 0)
@@ -453,7 +452,6 @@ do
     friendsLabel.Text = "FRIENDS:"
     friendsLabel.ZIndex = 5
     friendsLabel.Parent = friendsBox
-
     local friendsText = Instance.new("TextBox")
     friendsText.Size = UDim2.new(1, -80, 0, 26)
     friendsText.Position = UDim2.new(0, 78, 0, 3)
@@ -467,7 +465,6 @@ do
     friendsText.ZIndex = 5
     friendsText.Parent = friendsBox
     Instance.new("UICorner", friendsText).CornerRadius = UDim.new(0, 4)
-
     local friendsCount = Instance.new("TextLabel")
     friendsCount.Size = UDim2.new(1, -10, 0, 14)
     friendsCount.BackgroundTransparency = 1
@@ -480,53 +477,33 @@ do
 
     local function parseFriends(text)
         FriendsNamesList = {}
-        for name in text:gmatch("%S+") do
-            table.insert(FriendsNamesList, name:lower())
-        end
+        for name in text:gmatch("%S+") do table.insert(FriendsNamesList, name:lower()) end
         friendsCount.Text = "Protected Friends: " .. #FriendsNamesList
     end
-
-    friendsText:GetPropertyChangedSignal("Text"):Connect(function()
-        parseFriends(friendsText.Text)
-    end)
+    friendsText:GetPropertyChangedSignal("Text"):Connect(function() parseFriends(friendsText.Text) end)
 
     local function isFriend(name)
         local ln = name:lower()
-        for _, f in ipairs(FriendsNamesList) do
-            if ln:find(f, 1, true) then return true end
-        end
+        for _, f in ipairs(FriendsNamesList) do if ln:find(f, 1, true) then return true end end
         return false
     end
 
-    -- Hitbox loop
     RunService.RenderStepped:Connect(function()
         for _, player in ipairs(Players:GetPlayers()) do
             if player == LocalPlayer then continue end
             if not player.Character then continue end
-
             pcall(function()
                 local hrp = player.Character:FindFirstChild("HumanoidRootPart")
                 if not hrp then return end
-
-                if isFriend(player.Name) or isFriend(player.DisplayName) then
+                if isFriend(player.Name) or isFriend(player.DisplayName) or not HitboxEnabled then
                     hrp.Size = Vector3.new(2, 2, 1)
                     hrp.Transparency = 1
                     hrp.Material = Enum.Material.Plastic
                     hrp.CanCollide = false
                     return
                 end
-
-                if not HitboxEnabled then
-                    hrp.Size = Vector3.new(2, 2, 1)
-                    hrp.Transparency = 1
-                    hrp.Material = Enum.Material.Plastic
-                    hrp.CanCollide = false
-                    return
-                end
-
                 hrp.Size = Vector3.new(HitboxSize, HitboxSize, HitboxSize)
                 hrp.CanCollide = false
-
                 if HitboxVisible then
                     hrp.Transparency = 0.7
                     hrp.Material = Enum.Material.Neon
@@ -539,9 +516,7 @@ do
         end
     end)
 
-    -- KillAura
     local RE = {HitRemote = nil, PunchDoRemote = nil}
-
     task.spawn(function()
         task.wait(1)
         pcall(function()
@@ -552,68 +527,58 @@ do
 
     local auraLoop
     local lastAttack = 0
-
     function startKillAura()
         if auraLoop then auraLoop:Disconnect() end
         lastAttack = 0
-
         auraLoop = RunService.Heartbeat:Connect(function()
             if not KillAuraEnabled or ScriptUnloaded then return end
-
             local now = tick()
             if now - lastAttack < (1 / AttacksPerSecond) then return end
-
             local char = LocalPlayer.Character
             if not char or not char:FindFirstChild("HumanoidRootPart") then return end
             local myPos = char.HumanoidRootPart.Position
-
             local targets = {}
             for _, plr in ipairs(Players:GetPlayers()) do
                 if plr == LocalPlayer or not plr.Character then continue end
                 if isFriend(plr.Name) or isFriend(plr.DisplayName) then continue end
-
                 local hrp = plr.Character:FindFirstChild("HumanoidRootPart")
                 local hum = plr.Character:FindFirstChildOfClass("Humanoid")
                 if hrp and hum and hum.Health > 0 then
                     local dist = (hrp.Position - myPos).Magnitude
-                    if dist <= KillAuraRange then
-                        table.insert(targets, {char = plr.Character, dist = dist})
-                    end
+                    if dist <= KillAuraRange then table.insert(targets, {char = plr.Character, dist = dist}) end
                 end
             end
-
             table.sort(targets, function(a,b) return a.dist < b.dist end)
-
             if #targets == 0 then return end
-
             lastAttack = now
-
             for _, t in ipairs(targets) do
                 task.spawn(function()
-                    pcall(function()
-                        if RE.PunchDoRemote then RE.PunchDoRemote:InvokeServer() end
-                    end)
+                    pcall(function() if RE.PunchDoRemote then RE.PunchDoRemote:InvokeServer() end end)
                     task.wait(0.01)
-                    pcall(function()
-                        local hum = t.char:FindFirstChildOfClass("Humanoid")
-                        if hum and RE.HitRemote then RE.HitRemote:InvokeServer(hum) end
-                    end)
+                    pcall(function() local hum = t.char:FindFirstChildOfClass("Humanoid") if hum and RE.HitRemote then RE.HitRemote:InvokeServer(hum) end end)
                 end)
             end
         end)
     end
 
-    function stopKillAura()
-        if auraLoop then auraLoop:Disconnect() auraLoop = nil end
-    end
+    function stopKillAura() if auraLoop then auraLoop:Disconnect() auraLoop = nil end end
 
     safeConnect(UserInputService.InputBegan, function(input, gp)
         if gp then return end
         for k, data in pairs(ToggleCallbacks) do
             local kc = data.getKey and data.getKey()
-            if kc and input.KeyCode == kc then
-                data.toggle()
-            end
+            if kc and input.KeyCode == kc then data.toggle() end
         end
+    end)
+
+    safeConnect(RunService.Heartbeat, function()
+        if AntiRagdollEnabled and LocalPlayer.Character then
+            handleRagdollLogic(LocalPlayer.Character, true)
+        end
+    end)
+
+    game:BindToClose(function()
+        ScriptUnloaded = true
+        for _, conn in ipairs(AllConnections) do pcall(function() conn:Disconnect() end) end
     end)
 end
