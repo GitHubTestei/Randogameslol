@@ -25,6 +25,7 @@ do
     local HitboxSize = 10
     local KillAuraRange = 20
     local AttacksPerSecond = 15
+    local RainbowSpeed = 10 -- Default speed
     local FriendsNamesList = {}
 
     local Keybinds = {
@@ -52,19 +53,23 @@ do
             UpdateBio:FireServer("")
             bioSet = true
         end
-        local SPEED = 0.55
-        local SATURATION = 0.65
-        local VALUE = 0.98
+        
         local accumulatedBio = 0
         local accumulatedRP = 0
         local PHASE_OFFSET = 0.22
+        
         rainbowConnection = RunService.RenderStepped:Connect(function(dt)
-            accumulatedBio = accumulatedBio + dt * SPEED
-            accumulatedRP = accumulatedRP + dt * SPEED
+            -- Converting 1-100 scale to a usable multiplier
+            local internalSpeed = RainbowSpeed * 0.05 
+            
+            accumulatedBio = accumulatedBio + dt * internalSpeed
+            accumulatedRP = accumulatedRP + dt * internalSpeed
+            
             local hueBio = (accumulatedBio + PHASE_OFFSET) % 1
-            local pastelBio = Color3.fromHSV(hueBio, SATURATION, VALUE)
+            local pastelBio = Color3.fromHSV(hueBio, 0.65, 0.98)
             local hueRP = accumulatedRP % 1
-            local pastelRP = Color3.fromHSV(hueRP, SATURATION, VALUE)
+            local pastelRP = Color3.fromHSV(hueRP, 0.65, 0.98)
+            
             UpdateBioColor:FireServer(pastelBio)
             UpdateRPColor:FireServer(pastelRP)
         end)
@@ -77,7 +82,7 @@ do
         end
     end
 
-    -- ANTI RAGDOLL LOGIC (UNTOUCHED)
+    -- ANTI RAGDOLL LOGIC (KEPT EXACTLY AS PROVIDED)
     local function cleanRagdoll(character)
         if not character or not AntiRagdollEnabled then return end
         local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -171,7 +176,7 @@ do
 
     ToggleButton.MouseButton1Click:Connect(function() MainFrame.Visible = not MainFrame.Visible end)
 
-    local dragging, dragInput, dragStart, startPos
+    local dragging, dragStart, startPos
     local function updateDrag(input)
         local delta = input.Position - dragStart
         MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
@@ -194,9 +199,8 @@ do
         end
     end)
 
-    -- TOGGLE GUI KEYBIND (PC ONLY: INSERT OR LEFT CONTROL)
-    safeConnect(UserInputService.InputBegan, function(input, gameProcessed)
-        if gameProcessed then return end
+    safeConnect(UserInputService.InputBegan, function(input, gp)
+        if gp then return end
         if input.KeyCode == Enum.KeyCode.Insert or input.KeyCode == Enum.KeyCode.LeftControl then 
             MainFrame.Visible = not MainFrame.Visible 
         end
@@ -208,7 +212,7 @@ do
     ContentArea.BackgroundTransparency = 1
     ContentArea.ScrollBarThickness = 3
     ContentArea.ScrollBarImageColor3 = Color3.fromRGB(100, 180, 255)
-    ContentArea.CanvasSize = UDim2.new(0, 0, 0, 900)
+    ContentArea.CanvasSize = UDim2.new(0, 0, 0, 950)
     ContentArea.ZIndex = 2
     ContentArea.Parent = MainFrame
 
@@ -410,8 +414,9 @@ do
     createSlider("Hitbox Size", 1, 50, 10, HitboxSection, function(v) HitboxSize = v end, 3)
 
     local RainbowSection = createSection("Rainbow Tag", 3)
-    RainbowSection.Size = UDim2.new(0.94, 0, 0, 90)
-    createToggle("Rainbow Tag Enabled", RainbowSection, function(state) RainbowTagEnabled = state if state then startRainbow() else stopRainbow() end end, 1, "RainbowTag")
+    RainbowSection.Size = UDim2.new(0.94, 0, 0, 120) -- Slightly larger for slider
+    createToggle("Rainbow Enabled", RainbowSection, function(state) RainbowTagEnabled = state if state then startRainbow() else stopRainbow() end end, 1, "RainbowTag")
+    createSlider("Rainbow Speed", 1, 100, 10, RainbowSection, function(v) RainbowSpeed = v end, 2)
 
     local DeathTPSection = createSection("Death TP", 4)
     DeathTPSection.Size = UDim2.new(0.94, 0, 0, 60)
