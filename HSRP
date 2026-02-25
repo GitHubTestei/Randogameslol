@@ -77,11 +77,10 @@ do
         end
     end
 
-    -- Improved Anti-Ragdoll Logic (Reversible)
-    local function handleRagdollLogic(character, state)
-        if not character then return end
+    -- ANTI RAGDOLL LOGIC (UNTOUCHED)
+    local function cleanRagdoll(character)
+        if not character or not AntiRagdollEnabled then return end
         local humanoid = character:FindFirstChildOfClass("Humanoid")
-        
         if humanoid then
             local badStates = {
                 Enum.HumanoidStateType.Ragdoll,
@@ -89,21 +88,23 @@ do
                 Enum.HumanoidStateType.FallingDown,
                 Enum.HumanoidStateType.PlatformStanding
             }
-            for _, s in ipairs(badStates) do
-                -- If state is true, we DISABLE the ragdoll states. If state is false, we RE-ENABLE them.
-                pcall(function() humanoid:SetStateEnabled(s, not state) end)
+            for _, state in ipairs(badStates) do
+                pcall(function() humanoid:SetStateEnabled(state, false) end)
             end
-            if state then humanoid.PlatformStand = false end
+            humanoid.PlatformStand = false
         end
         
-        -- Handle Constraints and Motors
+        local junk = {"RagdollJoints", "NoCollisions", "Local Ragdoll"}
+        for _, name in ipairs(junk) do
+            local obj = character:FindFirstChild(name)
+            if obj then obj:Destroy() end
+        end
+
         for _, obj in ipairs(character:GetDescendants()) do
             if (obj:IsA("BaseConstraint") or obj:IsA("Attachment")) and obj.Name:lower():find("ragdoll") then
-                obj.Enabled = not state -- Disable instead of Destroy
+                obj:Destroy()
             elseif obj:IsA("Motor6D") then
-                if state then
-                    obj.Enabled = true -- Force motors on when Anti-Ragdoll is active
-                end
+                obj.Enabled = true
             end
         end
     end
@@ -125,9 +126,10 @@ do
             end
         end)
 
-        char.DescendantAdded:Connect(function()
+        char.DescendantAdded:Connect(function(desc)
             if AntiRagdollEnabled then
-                handleRagdollLogic(char, true)
+                task.wait()
+                cleanRagdoll(char)
             end
         end)
     end
@@ -192,9 +194,9 @@ do
         end
     end)
 
-    -- Toggle GUI Keybind (Insert and LeftControl)
-    safeConnect(UserInputService.InputBegan, function(input, gp)
-        if gp then return end
+    -- TOGGLE GUI KEYBIND (PC ONLY: INSERT OR LEFT CONTROL)
+    safeConnect(UserInputService.InputBegan, function(input, gameProcessed)
+        if gameProcessed then return end
         if input.KeyCode == Enum.KeyCode.Insert or input.KeyCode == Enum.KeyCode.LeftControl then 
             MainFrame.Visible = not MainFrame.Visible 
         end
@@ -419,8 +421,8 @@ do
     AntiRagdollSection.Size = UDim2.new(0.94, 0, 0, 60)
     createToggle("Anti Ragdoll Enabled", AntiRagdollSection, function(state) 
         AntiRagdollEnabled = state 
-        if LocalPlayer.Character then 
-            handleRagdollLogic(LocalPlayer.Character, state) 
+        if state and LocalPlayer.Character then 
+            cleanRagdoll(LocalPlayer.Character) 
         end 
     end, 1, "AntiRagdoll")
 
@@ -573,7 +575,7 @@ do
 
     safeConnect(RunService.Heartbeat, function()
         if AntiRagdollEnabled and LocalPlayer.Character then
-            handleRagdollLogic(LocalPlayer.Character, true)
+            cleanRagdoll(LocalPlayer.Character)
         end
     end)
 
