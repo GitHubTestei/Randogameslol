@@ -29,6 +29,8 @@ local TargetBackstabEnabled = false
 local HighlightFriendsEnabled = false
 local TargetNametagsEnabled = false
 local TeleportAuraEnabled = false
+local SilentAutoBlockEnabled = false
+local AntiRagComboEnabled = false
 local deathCFrame = nil
 local strafeAngle = 0
 
@@ -43,13 +45,12 @@ local StrafeGroundOffset = -3.5
 local TeleportAuraRadius = 15
 local TeleportAuraHeightMin = 0
 local TeleportAuraHeightMax = 10
-local TeleportAuraDelay = 0  -- 0 = instant cycle, maps 0-100 slider to 0-5 seconds
+local TeleportAuraDelay = 0
 
--- Saved values so TP aura can restore them when it stops
 local _savedHitboxSize = nil
 local _savedKillAuraRange = nil
 local _savedAttacksPerSecond = nil
-local _tpAuraStartedKillAura = false  -- did TP aura turn on kill aura by itself?
+local _tpAuraStartedKillAura = false
 
 local FriendsNamesList = {}
 local TargetNamesList = {}
@@ -82,6 +83,8 @@ local Keybinds = {
     TargetStrafe = nil,
     TargetBackstab = nil,
     Respawn = nil,
+    SilentAutoBlock = nil,
+    AntiRagCombo = nil,
 }
 
 local ScriptUnloaded = false
@@ -378,15 +381,12 @@ local function clampToRoomBounds(targetPos, radius)
     local maxX = math.max(-502.5840, -549.8830, -549.4838, -502.7632)
     local minZ = math.min(-99.7188, -97.9642, -172.7903, -172.8640)
     local maxZ = math.max(-99.7188, -97.9642, -172.7903, -172.8640)
-
     minX = minX + radius
     maxX = maxX - radius
     minZ = minZ + radius
     maxZ = maxZ - radius
-
     local clampedX = math.clamp(targetPos.X, minX, maxX)
     local clampedZ = math.clamp(targetPos.Z, minZ, maxZ)
-
     return Vector3.new(clampedX, targetPos.Y, clampedZ)
 end
 
@@ -394,53 +394,39 @@ local function getRandomCorner()
     return RoomCorners[math.random(1, #RoomCorners)]
 end
 
--- forward declare so startTeleportAura can reference them
 local startKillAura, stopKillAura
 
 local function startTeleportAura()
-    if TeleportAuraLoop then TeleportAuraLoop:Disconnect() end
-
-    -- Save current values and boost them for TP aura
+    if TeleportAuraLoop then TeleportAuraLoop.disconnect() end
     _savedHitboxSize       = HitboxSize
     _savedKillAuraRange    = KillAuraRange
     _savedAttacksPerSecond = AttacksPerSecond
-
     HitboxSize       = 30
     KillAuraRange    = 50
     AttacksPerSecond = 3000
-
-    -- Only turn on kill aura if it wasn't already on by the user
     if not KillAuraEnabled then
         _tpAuraStartedKillAura = true
         KillAuraEnabled = true
         startKillAura()
     else
-        -- Kill aura is already running; restart it so it picks up new values
         _tpAuraStartedKillAura = false
         startKillAura()
     end
-
-    -- Use a task.spawn loop instead of Heartbeat so task.wait works correctly
     local loopActive = true
     TeleportAuraLoop = { disconnect = function() loopActive = false end }
-
     task.spawn(function()
         while loopActive and TeleportAuraEnabled do
             local char = LocalPlayer.Character
             local myHRP = char and char:FindFirstChild("HumanoidRootPart")
-
             if myHRP then
                 local closestTarget = nil
                 local closestDist = math.huge
-
                 for _, plr in ipairs(Players:GetPlayers()) do
                     if plr == LocalPlayer or not plr.Character then continue end
                     if isFriend(plr.Name) or isFriend(plr.DisplayName) then continue end
                     if not isTarget(plr.Name) and not isTarget(plr.DisplayName) then continue end
-
                     local targetHRP = plr.Character:FindFirstChild("HumanoidRootPart")
                     local hum = plr.Character:FindFirstChildOfClass("Humanoid")
-
                     if targetHRP and hum and hum.Health > 0 then
                         local dist = (targetHRP.Position - myHRP.Position).Magnitude
                         if dist < closestDist then
@@ -449,70 +435,220 @@ local function startTeleportAura()
                         end
                     end
                 end
-
                 if closestTarget then
                     local targetPos = closestTarget.Position
                     local randomHeight = math.random(TeleportAuraHeightMin * 10, TeleportAuraHeightMax * 10) / 10
-
-                    local offsetAngle  = math.random() * math.pi * 2
-                    local offsetX      = math.cos(offsetAngle) * TeleportAuraRadius
-                    local offsetZ      = math.sin(offsetAngle) * TeleportAuraRadius
-                    local tpToPos      = Vector3.new(targetPos.X + offsetX, targetPos.Y + randomHeight, targetPos.Z + offsetZ)
-                    tpToPos            = clampToRoomBounds(tpToPos, TeleportAuraRadius)
-
-                    -- TP to target
+                    local offsetAngle = math.random() * math.pi * 2
+                    local offsetX = math.cos(offsetAngle) * TeleportAuraRadius
+                    local offsetZ = math.sin(offsetAngle) * TeleportAuraRadius
+                    local tpToPos = Vector3.new(targetPos.X + offsetX, targetPos.Y + randomHeight, targetPos.Z + offsetZ)
+                    tpToPos = clampToRoomBounds(tpToPos, TeleportAuraRadius)
                     myHRP.CFrame = CFrame.new(tpToPos)
                     myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-
-                    -- yield one frame so the target TP actually registers server-side
                     task.wait()
-
-                    -- TP back to corner
                     local randomCorner = getRandomCorner()
                     myHRP.CFrame = randomCorner
                     myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                 end
             end
-
-            -- Wait between cycles: slider 0 = no wait, 100 = 5 seconds
             local waitTime = (TeleportAuraDelay / 100) * 5
             if waitTime > 0 then
                 task.wait(waitTime)
             else
-                task.wait()  -- yield one frame so we don't freeze the game at 0
+                task.wait()
             end
         end
     end)
 end
 
 local function stopTeleportAura()
-    -- Stop the TP movement loop
     if TeleportAuraLoop then
         TeleportAuraLoop.disconnect()
         TeleportAuraLoop = nil
     end
     TeleportAuraEnabled = false
-
-    -- Restore original hitbox / aura values
     if _savedHitboxSize       then HitboxSize       = _savedHitboxSize       end
     if _savedKillAuraRange    then KillAuraRange    = _savedKillAuraRange    end
     if _savedAttacksPerSecond then AttacksPerSecond = _savedAttacksPerSecond end
     _savedHitboxSize       = nil
     _savedKillAuraRange    = nil
     _savedAttacksPerSecond = nil
-
-    -- Only turn off kill aura if TP aura was the one that turned it on
     if _tpAuraStartedKillAura then
         KillAuraEnabled = false
         stopKillAura()
         _tpAuraStartedKillAura = false
     else
-        -- Kill aura was already on by the user; restart it with restored values
-        if KillAuraEnabled then
-            startKillAura()
+        if KillAuraEnabled then startKillAura() end
+    end
+end
+
+-- ============================================================
+-- SILENT AUTO BLOCK
+-- ============================================================
+local autoBlockConnection = nil
+
+local function startAutoBlock()
+    if autoBlockConnection then return end
+    autoBlockConnection = RunService.Heartbeat:Connect(function()
+        if not SilentAutoBlockEnabled then return end
+        pcall(function()
+            ReplicatedStorage.Packages.Knit.Services.CombatService.RF.Block:InvokeServer(true)
+        end)
+    end)
+end
+
+local function stopAutoBlock()
+    if autoBlockConnection then
+        autoBlockConnection:Disconnect()
+        autoBlockConnection = nil
+    end
+end
+
+-- ============================================================
+-- ANTI RAG COMBO (v1.6 port — fully independent)
+-- ============================================================
+
+-- The safe CFrame the player is pinned to while ragdolled.
+-- This is the same hardcoded position from the original standalone script.
+local _arc_targetCFrame = CFrame.new(-502.844818, 10.1868954, -65.4427567, 0.560596228, 2.67291544e-09, -0.828089297, -2.95736768e-08, 1, -1.67928462e-08, 0.828089297, 3.39036497e-08, 0.560596228)
+local _arc_safeCFrame   = _arc_targetCFrame + Vector3.new(0, 1, 0)
+
+local _arc_connection           = nil
+local _arc_originalCFrame       = nil
+local _arc_hasCleanedThisRagdoll = false
+local _arc_returnTask           = nil
+
+local function _arc_countDisabledMotors(char)
+    if not char then return 0, 0 end
+    local total, disabled = 0, 0
+    for _, obj in ipairs(char:GetDescendants()) do
+        if obj:IsA("Motor6D") then
+            total += 1
+            if not obj.Enabled then disabled += 1 end
+        end
+    end
+    return total, disabled
+end
+
+local function _arc_forceEndRagdoll(char)
+    if not char then return end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        for _, state in ipairs({
+            Enum.HumanoidStateType.Ragdoll,
+            Enum.HumanoidStateType.Physics,
+            Enum.HumanoidStateType.FallingDown,
+            Enum.HumanoidStateType.PlatformStanding
+        }) do
+            pcall(function() humanoid:SetStateEnabled(state, false) end)
+        end
+        humanoid.PlatformStand = false
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end
+    for _, n in ipairs({"RagdollJoints", "NoCollisions", "Local Ragdoll"}) do
+        local obj = char:FindFirstChild(n)
+        if obj then obj:Destroy() end
+    end
+    for _, obj in ipairs(char:GetDescendants()) do
+        if obj:IsA("Motor6D") then
+            obj.Enabled = true
+        elseif (obj:IsA("BaseConstraint") or obj:IsA("Attachment")) and obj.Name:lower():find("ragdoll") then
+            obj:Destroy()
         end
     end
 end
+
+-- Mirrors onCharacterAdded from the standalone script exactly,
+-- but gated behind AntiRagComboEnabled so it only runs when toggled on.
+local function _arc_onCharacterAdded(char)
+    local hrp = char:WaitForChild("HumanoidRootPart", 10)
+    if not hrp then return end
+
+    -- Clean up previous state
+    if _arc_connection then _arc_connection:Disconnect() _arc_connection = nil end
+    _arc_originalCFrame        = nil
+    _arc_hasCleanedThisRagdoll = false
+    if _arc_returnTask then task.cancel(_arc_returnTask) _arc_returnTask = nil end
+
+    task.wait(2.5)
+
+    -- Don't start if the toggle was turned off during the wait
+    if not AntiRagComboEnabled then return end
+
+    _arc_connection = RunService.Heartbeat:Connect(function()
+        -- Respect the toggle — stop processing if disabled
+        if not AntiRagComboEnabled then return end
+
+        if not char.Parent or not hrp.Parent then
+            if _arc_connection then _arc_connection:Disconnect() _arc_connection = nil end
+            return
+        end
+
+        local total, disabled = _arc_countDisabledMotors(char)
+        local isRagdolled = total >= 12 and (disabled / total) >= 0.9
+
+        if isRagdolled then
+            -- Save original spot once
+            if not _arc_originalCFrame then
+                _arc_originalCFrame = hrp.CFrame
+            end
+
+            -- Persistent pin to safe CFrame during ragdoll
+            hrp.CFrame = _arc_safeCFrame
+
+            -- One-time cleanup to allow movement
+            if not _arc_hasCleanedThisRagdoll then
+                _arc_forceEndRagdoll(char)
+                _arc_hasCleanedThisRagdoll = true
+            end
+        else
+            -- Ragdoll ended → schedule return after 0.1s
+            if _arc_originalCFrame and not _arc_returnTask then
+                _arc_returnTask = task.delay(0.1, function()
+                    if hrp and hrp.Parent and _arc_originalCFrame then
+                        hrp.CFrame = _arc_originalCFrame
+                        task.delay(0.05, function()
+                            if hrp and hrp.Parent then
+                                hrp.AssemblyLinearVelocity = Vector3.new(0, -1, 0)
+                            end
+                        end)
+                    end
+                    _arc_originalCFrame = nil
+                    _arc_returnTask     = nil
+                end)
+            end
+
+            _arc_hasCleanedThisRagdoll = false
+        end
+    end)
+end
+
+local function startAntiRagCombo()
+    local char = LocalPlayer.Character
+    if char then
+        task.spawn(_arc_onCharacterAdded, char)
+    end
+end
+
+local function stopAntiRagCombo()
+    if _arc_connection then
+        _arc_connection:Disconnect()
+        _arc_connection = nil
+    end
+    if _arc_returnTask then
+        task.cancel(_arc_returnTask)
+        _arc_returnTask = nil
+    end
+    _arc_originalCFrame        = nil
+    _arc_hasCleanedThisRagdoll = false
+end
+
+-- Restart on respawn (mirrors LocalPlayer.CharacterAdded in standalone script)
+LocalPlayer.CharacterAdded:Connect(function(char)
+    if AntiRagComboEnabled then
+        task.spawn(_arc_onCharacterAdded, char)
+    end
+end)
 
 -- GUI
 local ScreenGui = Instance.new("ScreenGui")
@@ -577,7 +713,7 @@ ContentArea.Position = UDim2.new(0, 15, 0, 15)
 ContentArea.BackgroundTransparency = 1
 ContentArea.ScrollBarThickness = 3
 ContentArea.ScrollBarImageColor3 = Color3.fromRGB(100, 180, 255)
-ContentArea.CanvasSize = UDim2.new(0, 0, 0, 1650)
+ContentArea.CanvasSize = UDim2.new(0, 0, 0, 1850)
 ContentArea.ZIndex = 2
 ContentArea.Parent = MainFrame
 
@@ -1092,7 +1228,34 @@ end)
 
 local AntiRagdollSection = createSection("Anti Ragdoll", 8)
 AntiRagdollSection.Size = UDim2.new(0.94, 0, 0, 60)
-createToggle("Anti Ragdoll Enabled", AntiRagdollSection, function(state) AntiRagdollEnabled = state if state and LocalPlayer.Character then cleanRagdoll(LocalPlayer.Character) end end, 1, "AntiRagdoll")
+createToggle("Anti Ragdoll Enabled", AntiRagdollSection, function(state)
+    AntiRagdollEnabled = state
+    if state and LocalPlayer.Character then cleanRagdoll(LocalPlayer.Character) end
+end, 1, "AntiRagdoll")
+
+-- NEW: SILENT AUTO BLOCK SECTION
+local SilentAutoBlockSection = createSection("Silent AutoBlock", 9)
+SilentAutoBlockSection.Size = UDim2.new(0.94, 0, 0, 60)
+createToggle("Silent AutoBlock Enabled", SilentAutoBlockSection, function(state)
+    SilentAutoBlockEnabled = state
+    if state then
+        startAutoBlock()
+    else
+        stopAutoBlock()
+    end
+end, 1, "SilentAutoBlock")
+
+-- NEW: ANTI RAG COMBO SECTION
+local AntiRagComboSection = createSection("Anti Rag Combo", 10)
+AntiRagComboSection.Size = UDim2.new(0.94, 0, 0, 60)
+createToggle("Anti Rag Combo Enabled", AntiRagComboSection, function(state)
+    AntiRagComboEnabled = state
+    if state then
+        startAntiRagCombo()
+    else
+        stopAntiRagCombo()
+    end
+end, 1, "AntiRagCombo")
 
 -- HITBOX RENDERER
 RunService.RenderStepped:Connect(function()
@@ -1139,7 +1302,6 @@ end)
 local auraLoop
 local lastAttack = 0
 
--- Defined here so startTeleportAura / stopTeleportAura above can reference them
 startKillAura = function()
     if auraLoop then auraLoop:Disconnect() end
     lastAttack = 0
@@ -1240,6 +1402,9 @@ end)
 game:BindToClose(function()
     ScriptUnloaded = true
     for _, conn in ipairs(AllConnections) do pcall(function() conn:Disconnect() end) end
+    stopAutoBlock()
+    stopAntiRagCombo()
+    if _arc_returnTask then task.cancel(_arc_returnTask) end
     for _, tag in pairs(FriendNametags) do pcall(function() tag:Destroy() end) end
     for _, tag in pairs(TargetNametags) do pcall(function() tag:Destroy() end) end
 end)
