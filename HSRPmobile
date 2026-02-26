@@ -43,6 +43,7 @@ local StrafeGroundOffset = -3.5
 local TeleportAuraRadius = 15
 local TeleportAuraHeightMin = 0
 local TeleportAuraHeightMax = 10
+local TeleportAuraDelay = 0  -- 0 = instant cycle, maps 0-100 slider to 0-5 seconds
 
 -- Saved values so TP aura can restore them when it stops
 local _savedHitboxSize = nil
@@ -419,66 +420,75 @@ local function startTeleportAura()
         startKillAura()
     end
 
-    TeleportAuraLoop = RunService.Heartbeat:Connect(function()
-        if not TeleportAuraEnabled then return end
+    -- Use a task.spawn loop instead of Heartbeat so task.wait works correctly
+    local loopActive = true
+    TeleportAuraLoop = { disconnect = function() loopActive = false end }
 
-        local char = LocalPlayer.Character
-        if not char then return end
+    task.spawn(function()
+        while loopActive and TeleportAuraEnabled do
+            local char = LocalPlayer.Character
+            local myHRP = char and char:FindFirstChild("HumanoidRootPart")
 
-        local myHRP = char:FindFirstChild("HumanoidRootPart")
-        if not myHRP then return end
+            if myHRP then
+                local closestTarget = nil
+                local closestDist = math.huge
 
-        local closestTarget = nil
-        local closestDist = math.huge
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if plr == LocalPlayer or not plr.Character then continue end
+                    if isFriend(plr.Name) or isFriend(plr.DisplayName) then continue end
+                    if not isTarget(plr.Name) and not isTarget(plr.DisplayName) then continue end
 
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr == LocalPlayer or not plr.Character then continue end
-            if isFriend(plr.Name) or isFriend(plr.DisplayName) then continue end
-            if not isTarget(plr.Name) and not isTarget(plr.DisplayName) then continue end
+                    local targetHRP = plr.Character:FindFirstChild("HumanoidRootPart")
+                    local hum = plr.Character:FindFirstChildOfClass("Humanoid")
 
-            local targetHRP = plr.Character:FindFirstChild("HumanoidRootPart")
-            local hum = plr.Character:FindFirstChildOfClass("Humanoid")
+                    if targetHRP and hum and hum.Health > 0 then
+                        local dist = (targetHRP.Position - myHRP.Position).Magnitude
+                        if dist < closestDist then
+                            closestDist = dist
+                            closestTarget = targetHRP
+                        end
+                    end
+                end
 
-            if targetHRP and hum and hum.Health > 0 then
-                local dist = (targetHRP.Position - myHRP.Position).Magnitude
-                if dist < closestDist then
-                    closestDist = dist
-                    closestTarget = targetHRP
+                if closestTarget then
+                    local targetPos = closestTarget.Position
+                    local randomHeight = math.random(TeleportAuraHeightMin * 10, TeleportAuraHeightMax * 10) / 10
+
+                    local offsetAngle  = math.random() * math.pi * 2
+                    local offsetX      = math.cos(offsetAngle) * TeleportAuraRadius
+                    local offsetZ      = math.sin(offsetAngle) * TeleportAuraRadius
+                    local tpToPos      = Vector3.new(targetPos.X + offsetX, targetPos.Y + randomHeight, targetPos.Z + offsetZ)
+                    tpToPos            = clampToRoomBounds(tpToPos, TeleportAuraRadius)
+
+                    -- TP to target
+                    myHRP.CFrame = CFrame.new(tpToPos)
+                    myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+
+                    -- yield one frame so the target TP actually registers server-side
+                    task.wait()
+
+                    -- TP back to corner
+                    local randomCorner = getRandomCorner()
+                    myHRP.CFrame = randomCorner
+                    myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                 end
             end
+
+            -- Wait between cycles: slider 0 = no wait, 100 = 5 seconds
+            local waitTime = (TeleportAuraDelay / 100) * 5
+            if waitTime > 0 then
+                task.wait(waitTime)
+            else
+                task.wait()  -- yield one frame so we don't freeze the game at 0
+            end
         end
-
-        if not closestTarget then return end
-
-        local targetPos = closestTarget.Position
-        local randomHeight = math.random(TeleportAuraHeightMin * 10, TeleportAuraHeightMax * 10) / 10
-
-        local offsetAngle  = math.random() * math.pi * 2
-        local offsetRadius = TeleportAuraRadius
-        local offsetX      = math.cos(offsetAngle) * offsetRadius
-        local offsetZ      = math.sin(offsetAngle) * offsetRadius
-        local tpToPos      = Vector3.new(targetPos.X + offsetX, targetPos.Y + randomHeight, targetPos.Z + offsetZ)
-        tpToPos            = clampToRoomBounds(tpToPos, TeleportAuraRadius)
-
-        myHRP.CFrame = CFrame.new(tpToPos)
-        myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-
-        task.wait(0.05)
-
-        task.wait(0.5)
-
-        local randomCorner = getRandomCorner()
-        myHRP.CFrame = randomCorner
-        myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-
-        task.wait(0.5)
     end)
 end
 
 local function stopTeleportAura()
     -- Stop the TP movement loop
     if TeleportAuraLoop then
-        TeleportAuraLoop:Disconnect()
+        TeleportAuraLoop.disconnect()
         TeleportAuraLoop = nil
     end
     TeleportAuraEnabled = false
@@ -822,7 +832,7 @@ createToggle("Hitbox Visible", HitboxSection, function(state) HitboxVisible = st
 createSlider("Hitbox Size", 1, 50, 10, HitboxSection, function(v) HitboxSize = v end, 3)
 
 local TargetsSection = createSection("Targets", 3)
-TargetsSection.Size = UDim2.new(0.94, 0, 0, 600)
+TargetsSection.Size = UDim2.new(0.94, 0, 0, 650)
 
 createToggle("Target Strafe Enabled", TargetsSection, function(state)
     TargetStrafeEnabled = state
@@ -940,6 +950,7 @@ createSlider("Ground Offset", -15, 10, -3, TargetsSection, function(v) StrafeGro
 createSlider("TP Aura Radius", 5, 30, 15, TargetsSection, function(v) TeleportAuraRadius = v end, 12)
 createSlider("TP Height Min", 0, 10, 0, TargetsSection, function(v) TeleportAuraHeightMin = v end, 13)
 createSlider("TP Height Max", 0, 10, 10, TargetsSection, function(v) TeleportAuraHeightMax = v end, 14)
+createSlider("TP Aura Delay (0=instant, 100=slow)", 0, 100, 0, TargetsSection, function(v) TeleportAuraDelay = v end, 15)
 
 local function parseTargets(text)
     TargetNamesList = {}
