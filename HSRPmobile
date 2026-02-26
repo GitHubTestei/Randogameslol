@@ -505,7 +505,7 @@ local function stopAutoBlock()
 end
 
 -- ============================================================
--- ANTI RAG COMBO (v1.7 port — fully independent)
+-- ANTI RAG COMBO (v1.8 port — fully independent)
 -- ============================================================
 
 local _arc_targetCFrame = CFrame.new(-502.844818, 10.1868954, -65.4427567, 0.560596228, 2.67291544e-09, -0.828089297, -2.95736768e-08, 1, -1.67928462e-08, 0.828089297, 3.39036497e-08, 0.560596228)
@@ -583,10 +583,10 @@ local function _arc_onCharacterAdded(char)
         end
 
         -- Velocity tracking (zero → non-zero transition)
-        local hrp_vel         = hrp.AssemblyLinearVelocity
-        local mag             = hrp_vel.Magnitude
-        local y_vel           = hrp_vel.Y
-        local is_zero_vel     = (mag < 1e-6) and (math.abs(y_vel) < 1e-6)
+        local hrp_vel     = hrp.AssemblyLinearVelocity
+        local mag         = hrp_vel.Magnitude
+        local y_vel       = hrp_vel.Y
+        local is_zero_vel = (mag < 1e-6) and (math.abs(y_vel) < 1e-6)
 
         if _arc_was_zero_velocity and not is_zero_vel then
             _arc_last_zero_to_nonzero = tick()
@@ -603,7 +603,7 @@ local function _arc_onCharacterAdded(char)
                 local now = tick()
                 _arc_delay_time = 0.1
                 if _arc_last_zero_to_nonzero and (now - _arc_last_zero_to_nonzero) < 1 then
-                    _arc_delay_time = 3
+                    _arc_delay_time = 3.5
                 end
             end
 
@@ -616,7 +616,7 @@ local function _arc_onCharacterAdded(char)
                 _arc_hasCleanedThisRagdoll = true
             end
         else
-            -- Ragdoll ended → return after determined delay (0.1s or 3s)
+            -- Ragdoll ended → return after determined delay (0.1s or 3.5s)
             if _arc_originalCFrame and not _arc_returnTask then
                 _arc_returnTask = task.delay(_arc_delay_time, function()
                     if hrp and hrp.Parent and _arc_originalCFrame then
@@ -1251,28 +1251,18 @@ createToggle("Anti Ragdoll Enabled", AntiRagdollSection, function(state)
     if state and LocalPlayer.Character then cleanRagdoll(LocalPlayer.Character) end
 end, 1, "AntiRagdoll")
 
--- NEW: SILENT AUTO BLOCK SECTION
 local SilentAutoBlockSection = createSection("Silent AutoBlock", 9)
 SilentAutoBlockSection.Size = UDim2.new(0.94, 0, 0, 60)
 createToggle("Silent AutoBlock Enabled", SilentAutoBlockSection, function(state)
     SilentAutoBlockEnabled = state
-    if state then
-        startAutoBlock()
-    else
-        stopAutoBlock()
-    end
+    if state then startAutoBlock() else stopAutoBlock() end
 end, 1, "SilentAutoBlock")
 
--- NEW: ANTI RAG COMBO SECTION
 local AntiRagComboSection = createSection("Anti Rag Combo", 10)
 AntiRagComboSection.Size = UDim2.new(0.94, 0, 0, 60)
 createToggle("Anti Rag Combo Enabled", AntiRagComboSection, function(state)
     AntiRagComboEnabled = state
-    if state then
-        startAntiRagCombo()
-    else
-        stopAntiRagCombo()
-    end
+    if state then startAntiRagCombo() else stopAntiRagCombo() end
 end, 1, "AntiRagCombo")
 
 -- HITBOX RENDERER
