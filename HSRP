@@ -5,6 +5,7 @@ do
     local CoreGui = game:GetService("CoreGui")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local LocalPlayer = Players.LocalPlayer
+    local Mouse = LocalPlayer:GetMouse()
 
     local AllConnections = {}
 
@@ -20,12 +21,13 @@ do
     local RainbowTagEnabled = false
     local DeathTPEnabled = false
     local AntiRagdollEnabled = false
+    local ClickToAddEnabled = false
     local deathCFrame = nil
 
     local HitboxSize = 10
     local KillAuraRange = 20
     local AttacksPerSecond = 15
-    local RainbowSpeed = 10 -- Default speed
+    local RainbowSpeed = 10 
     local FriendsNamesList = {}
 
     local Keybinds = {
@@ -53,23 +55,17 @@ do
             UpdateBio:FireServer("")
             bioSet = true
         end
-        
         local accumulatedBio = 0
         local accumulatedRP = 0
         local PHASE_OFFSET = 0.22
-        
         rainbowConnection = RunService.RenderStepped:Connect(function(dt)
-            -- Converting 1-100 scale to a usable multiplier
             local internalSpeed = RainbowSpeed * 0.05 
-            
             accumulatedBio = accumulatedBio + dt * internalSpeed
             accumulatedRP = accumulatedRP + dt * internalSpeed
-            
             local hueBio = (accumulatedBio + PHASE_OFFSET) % 1
             local pastelBio = Color3.fromHSV(hueBio, 0.65, 0.98)
             local hueRP = accumulatedRP % 1
             local pastelRP = Color3.fromHSV(hueRP, 0.65, 0.98)
-            
             UpdateBioColor:FireServer(pastelBio)
             UpdateRPColor:FireServer(pastelRP)
         end)
@@ -82,7 +78,7 @@ do
         end
     end
 
-    -- ANTI RAGDOLL LOGIC (KEPT EXACTLY AS PROVIDED)
+    -- ANTI RAGDOLL LOGIC (UNTOUCHED)
     local function cleanRagdoll(character)
         if not character or not AntiRagdollEnabled then return end
         local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -98,13 +94,11 @@ do
             end
             humanoid.PlatformStand = false
         end
-        
         local junk = {"RagdollJoints", "NoCollisions", "Local Ragdoll"}
         for _, name in ipairs(junk) do
             local obj = character:FindFirstChild(name)
             if obj then obj:Destroy() end
         end
-
         for _, obj in ipairs(character:GetDescendants()) do
             if (obj:IsA("BaseConstraint") or obj:IsA("Attachment")) and obj.Name:lower():find("ragdoll") then
                 obj:Destroy()
@@ -119,23 +113,15 @@ do
         local humanoid = char:WaitForChild("Humanoid", 8)
         local hrp = char:WaitForChild("HumanoidRootPart", 8)
         if not humanoid or not hrp then return end
-        
         if DeathTPEnabled and deathCFrame then
             task.wait(0.1)
             hrp.CFrame = deathCFrame
         end
-        
         humanoid.Died:Connect(function()
-            if hrp and hrp.Parent then
-                deathCFrame = hrp.CFrame
-            end
+            if hrp and hrp.Parent then deathCFrame = hrp.CFrame end
         end)
-
         char.DescendantAdded:Connect(function(desc)
-            if AntiRagdollEnabled then
-                task.wait()
-                cleanRagdoll(char)
-            end
+            if AntiRagdollEnabled then task.wait() cleanRagdoll(char) end
         end)
     end
 
@@ -154,8 +140,6 @@ do
     MainFrame.Position = UDim2.new(0.5, -160, 0.5, -260)
     MainFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 14)
     MainFrame.BorderSizePixel = 0
-    MainFrame.Visible = true
-    MainFrame.ClipsDescendants = true
     MainFrame.Parent = ScreenGui
     Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
 
@@ -212,7 +196,7 @@ do
     ContentArea.BackgroundTransparency = 1
     ContentArea.ScrollBarThickness = 3
     ContentArea.ScrollBarImageColor3 = Color3.fromRGB(100, 180, 255)
-    ContentArea.CanvasSize = UDim2.new(0, 0, 0, 950)
+    ContentArea.CanvasSize = UDim2.new(0, 0, 0, 1000)
     ContentArea.ZIndex = 2
     ContentArea.Parent = MainFrame
 
@@ -235,7 +219,6 @@ do
         title.TextSize = 15
         title.Text = name
         title.TextXAlignment = Enum.TextXAlignment.Left
-        title.ZIndex = 4
         title.Parent = section
         local list = Instance.new("UIListLayout", section)
         list.Padding = UDim.new(0, 3)
@@ -250,16 +233,13 @@ do
         toggle.Size = UDim2.new(1, 0, 0, 26)
         toggle.BackgroundTransparency = 1
         toggle.LayoutOrder = order
-        toggle.ZIndex = 3
         toggle.Parent = parent
         local checkbox = Instance.new("TextButton")
         checkbox.Size = UDim2.new(0, 16, 0, 16)
         checkbox.Position = UDim2.new(0, 4, 0, 5)
         checkbox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-        checkbox.BorderColor3 = Color3.fromRGB(60, 60, 60)
         checkbox.BorderSizePixel = 1
         checkbox.Text = ""
-        checkbox.ZIndex = 4
         checkbox.Parent = toggle
         local checkmark = Instance.new("TextLabel")
         checkmark.Size = UDim2.new(1, 0, 1, 0)
@@ -268,7 +248,6 @@ do
         checkmark.Font = Enum.Font.GothamBold
         checkmark.TextSize = 13
         checkmark.Text = ""
-        checkmark.ZIndex = 5
         checkmark.Parent = checkbox
         local label = Instance.new("TextLabel")
         label.Size = UDim2.new(1, -90, 1, 0)
@@ -279,18 +258,15 @@ do
         label.TextSize = 13
         label.Text = text
         label.TextXAlignment = Enum.TextXAlignment.Left
-        label.ZIndex = 4
         label.Parent = toggle
         local bindBtn = Instance.new("TextButton")
         bindBtn.Size = UDim2.new(0, 45, 0, 18)
         bindBtn.Position = UDim2.new(1, -50, 0, 4)
         bindBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-        bindBtn.BorderSizePixel = 0
         bindBtn.Font = Enum.Font.GothamBold
         bindBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
         bindBtn.TextSize = 10
         bindBtn.Text = (keybindKey and Keybinds[keybindKey] and Keybinds[keybindKey].Name) or "None"
-        bindBtn.ZIndex = 4
         bindBtn.Parent = toggle
         Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 4)
         local enabled = false
@@ -305,7 +281,6 @@ do
         bindBtn.MouseButton1Click:Connect(function()
             waitingForKey = true
             bindBtn.Text = "..."
-            bindBtn.BackgroundColor3 = Color3.fromRGB(100,180,255)
         end)
         if keybindKey then
             ToggleCallbacks[keybindKey] = {
@@ -322,7 +297,6 @@ do
                     if keybindKey then Keybinds[keybindKey] = input.KeyCode end
                     bindBtn.Text = input.KeyCode.Name
                 end
-                bindBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
                 waitingForKey = false
             end
         end)
@@ -334,7 +308,6 @@ do
         slider.Size = UDim2.new(1, 0, 0, 36)
         slider.BackgroundTransparency = 1
         slider.LayoutOrder = order
-        slider.ZIndex = 3
         slider.Parent = parent
         local label = Instance.new("TextLabel")
         label.Size = UDim2.new(1, -45, 0, 18)
@@ -345,7 +318,6 @@ do
         label.TextSize = 13
         label.Text = text
         label.TextXAlignment = Enum.TextXAlignment.Left
-        label.ZIndex = 4
         label.Parent = slider
         local valueLabel = Instance.new("TextLabel")
         valueLabel.Size = UDim2.new(0, 35, 0, 18)
@@ -355,26 +327,22 @@ do
         valueLabel.Font = Enum.Font.GothamBold
         valueLabel.TextSize = 13
         valueLabel.Text = tostring(default)
-        valueLabel.ZIndex = 4
         valueLabel.Parent = slider
         local sliderBg = Instance.new("Frame")
         sliderBg.Size = UDim2.new(1, -10, 0, 5)
         sliderBg.Position = UDim2.new(0, 5, 0, 22)
         sliderBg.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-        sliderBg.ZIndex = 4
         sliderBg.Parent = slider
         Instance.new("UICorner", sliderBg).CornerRadius = UDim.new(0, 3)
         local sliderFill = Instance.new("Frame")
         sliderFill.Size = UDim2.new((default - min)/(max - min), 0, 1, 0)
         sliderFill.BackgroundColor3 = Color3.fromRGB(100, 180, 255)
-        sliderFill.ZIndex = 5
         sliderFill.Parent = sliderBg
         Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(0, 3)
         local sliderBtn = Instance.new("TextButton")
         sliderBtn.Size = UDim2.new(0, 12, 0, 12)
         sliderBtn.Position = UDim2.new((default - min)/(max - min), -6, 0.5, -6)
         sliderBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        sliderBtn.ZIndex = 6
         sliderBtn.Parent = sliderBg
         Instance.new("UICorner", sliderBtn).CornerRadius = UDim.new(1, 0)
         local function setValue(value)
@@ -385,15 +353,15 @@ do
             valueLabel.Text = tostring(value)
             callback(value)
         end
-        local dragging = false
+        local slider_dragging = false
         sliderBtn.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then slider_dragging = true end
         end)
         safeConnect(UserInputService.InputEnded, function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then slider_dragging = false end
         end)
         safeConnect(UserInputService.InputChanged, function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            if slider_dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                 local pos = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
                 setValue(min + (max - min) * pos)
             end
@@ -414,7 +382,7 @@ do
     createSlider("Hitbox Size", 1, 50, 10, HitboxSection, function(v) HitboxSize = v end, 3)
 
     local RainbowSection = createSection("Rainbow Tag", 3)
-    RainbowSection.Size = UDim2.new(0.94, 0, 0, 120) -- Slightly larger for slider
+    RainbowSection.Size = UDim2.new(0.94, 0, 0, 120)
     createToggle("Rainbow Enabled", RainbowSection, function(state) RainbowTagEnabled = state if state then startRainbow() else stopRainbow() end end, 1, "RainbowTag")
     createSlider("Rainbow Speed", 1, 100, 10, RainbowSection, function(v) RainbowSpeed = v end, 2)
 
@@ -424,29 +392,16 @@ do
 
     local AntiRagdollSection = createSection("Anti Ragdoll (BUGGY)", 5)
     AntiRagdollSection.Size = UDim2.new(0.94, 0, 0, 60)
-    createToggle("Anti Ragdoll Enabled", AntiRagdollSection, function(state) 
-        AntiRagdollEnabled = state 
-        if state and LocalPlayer.Character then 
-            cleanRagdoll(LocalPlayer.Character) 
-        end 
-    end, 1, "AntiRagdoll")
+    createToggle("Anti Ragdoll Enabled", AntiRagdollSection, function(state) AntiRagdollEnabled = state if state and LocalPlayer.Character then cleanRagdoll(LocalPlayer.Character) end end, 1, "AntiRagdoll")
 
     local FriendsSection = createSection("Friends List", 6)
-    FriendsSection.Size = UDim2.new(0.94, 0, 0, 110)
-    local friendsInfo = Instance.new("TextLabel")
-    friendsInfo.Size = UDim2.new(1, -10, 0, 16)
-    friendsInfo.BackgroundTransparency = 1
-    friendsInfo.TextColor3 = Color3.fromRGB(150, 150, 150)
-    friendsInfo.Font = Enum.Font.Gotham
-    friendsInfo.TextSize = 10
-    friendsInfo.Text = "KillAura + Hitbox will never affect players in this list"
-    friendsInfo.TextXAlignment = Enum.TextXAlignment.Left
-    friendsInfo.ZIndex = 4
-    friendsInfo.Parent = FriendsSection
+    FriendsSection.Size = UDim2.new(0.94, 0, 0, 150)
+    
+    createToggle("Click to Add Friend", FriendsSection, function(state) ClickToAddEnabled = state end, 1)
+
     local friendsBox = Instance.new("Frame")
     friendsBox.Size = UDim2.new(1, -10, 0, 32)
     friendsBox.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    friendsBox.ZIndex = 4
     friendsBox.Parent = FriendsSection
     Instance.new("UICorner", friendsBox).CornerRadius = UDim.new(0, 6)
     local friendsLabel = Instance.new("TextLabel")
@@ -457,7 +412,6 @@ do
     friendsLabel.Font = Enum.Font.GothamBold
     friendsLabel.TextSize = 12
     friendsLabel.Text = "FRIENDS:"
-    friendsLabel.ZIndex = 5
     friendsLabel.Parent = friendsBox
     local friendsText = Instance.new("TextBox")
     friendsText.Size = UDim2.new(1, -80, 0, 26)
@@ -466,10 +420,8 @@ do
     friendsText.TextColor3 = Color3.fromRGB(255, 255, 255)
     friendsText.Font = Enum.Font.Gotham
     friendsText.TextSize = 12
-    friendsText.PlaceholderText = "friend1 friend2 friend3..."
-    friendsText.PlaceholderColor3 = Color3.fromRGB(80, 80, 80)
+    friendsText.PlaceholderText = "friend1 friend2..."
     friendsText.ClearTextOnFocus = false
-    friendsText.ZIndex = 5
     friendsText.Parent = friendsBox
     Instance.new("UICorner", friendsText).CornerRadius = UDim.new(0, 4)
     local friendsCount = Instance.new("TextLabel")
@@ -479,7 +431,6 @@ do
     friendsCount.Font = Enum.Font.GothamBold
     friendsCount.TextSize = 10
     friendsCount.Text = "Protected Friends: 0"
-    friendsCount.ZIndex = 4
     friendsCount.Parent = FriendsSection
 
     local function parseFriends(text)
@@ -489,6 +440,22 @@ do
     end
     friendsText:GetPropertyChangedSignal("Text"):Connect(function() parseFriends(friendsText.Text) end)
 
+    -- CLICK TO ADD LOGIC
+    safeConnect(Mouse.Button1Down, function()
+        if not ClickToAddEnabled or not Mouse.Target then return end
+        local model = Mouse.Target:FindFirstAncestorOfClass("Model")
+        if model then
+            local player = Players:GetPlayerFromCharacter(model)
+            if player and player ~= LocalPlayer then
+                local name = player.Name
+                local currentText = friendsText.Text
+                if not currentText:lower():find(name:lower()) then
+                    friendsText.Text = currentText .. (currentText == "" and "" or " ") .. name
+                end
+            end
+        end
+    end)
+
     local function isFriend(name)
         local ln = name:lower()
         for _, f in ipairs(FriendsNamesList) do if ln:find(f, 1, true) then return true end end
@@ -497,8 +464,7 @@ do
 
     RunService.RenderStepped:Connect(function()
         for _, player in ipairs(Players:GetPlayers()) do
-            if player == LocalPlayer then continue end
-            if not player.Character then continue end
+            if player == LocalPlayer or not player.Character then continue end
             pcall(function()
                 local hrp = player.Character:FindFirstChild("HumanoidRootPart")
                 if not hrp then return end
@@ -579,9 +545,7 @@ do
     end)
 
     safeConnect(RunService.Heartbeat, function()
-        if AntiRagdollEnabled and LocalPlayer.Character then
-            cleanRagdoll(LocalPlayer.Character)
-        end
+        if AntiRagdollEnabled and LocalPlayer.Character then cleanRagdoll(LocalPlayer.Character) end
     end)
 
     game:BindToClose(function()
