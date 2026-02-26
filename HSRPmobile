@@ -505,18 +505,19 @@ local function stopAutoBlock()
 end
 
 -- ============================================================
--- ANTI RAG COMBO (v1.6 port — fully independent)
+-- ANTI RAG COMBO (v1.7 port — fully independent)
 -- ============================================================
 
--- The safe CFrame the player is pinned to while ragdolled.
--- This is the same hardcoded position from the original standalone script.
 local _arc_targetCFrame = CFrame.new(-502.844818, 10.1868954, -65.4427567, 0.560596228, 2.67291544e-09, -0.828089297, -2.95736768e-08, 1, -1.67928462e-08, 0.828089297, 3.39036497e-08, 0.560596228)
 local _arc_safeCFrame   = _arc_targetCFrame + Vector3.new(0, 1, 0)
 
-local _arc_connection           = nil
-local _arc_originalCFrame       = nil
-local _arc_hasCleanedThisRagdoll = false
-local _arc_returnTask           = nil
+local _arc_connection              = nil
+local _arc_originalCFrame          = nil
+local _arc_delay_time              = nil
+local _arc_hasCleanedThisRagdoll   = false
+local _arc_returnTask              = nil
+local _arc_last_zero_to_nonzero    = nil
+local _arc_was_zero_velocity       = false
 
 local function _arc_countDisabledMotors(char)
     if not char then return 0, 0 end
@@ -558,39 +559,52 @@ local function _arc_forceEndRagdoll(char)
     end
 end
 
--- Mirrors onCharacterAdded from the standalone script exactly,
--- but gated behind AntiRagComboEnabled so it only runs when toggled on.
 local function _arc_onCharacterAdded(char)
     local hrp = char:WaitForChild("HumanoidRootPart", 10)
     if not hrp then return end
 
-    -- Clean up previous state
     if _arc_connection then _arc_connection:Disconnect() _arc_connection = nil end
     _arc_originalCFrame        = nil
+    _arc_delay_time            = nil
     _arc_hasCleanedThisRagdoll = false
     if _arc_returnTask then task.cancel(_arc_returnTask) _arc_returnTask = nil end
+    _arc_last_zero_to_nonzero  = nil
+    _arc_was_zero_velocity     = false
 
     task.wait(2.5)
 
-    -- Don't start if the toggle was turned off during the wait
     if not AntiRagComboEnabled then return end
 
     _arc_connection = RunService.Heartbeat:Connect(function()
-        -- Respect the toggle — stop processing if disabled
         if not AntiRagComboEnabled then return end
-
         if not char.Parent or not hrp.Parent then
             if _arc_connection then _arc_connection:Disconnect() _arc_connection = nil end
             return
         end
 
+        -- Velocity tracking (zero → non-zero transition)
+        local hrp_vel         = hrp.AssemblyLinearVelocity
+        local mag             = hrp_vel.Magnitude
+        local y_vel           = hrp_vel.Y
+        local is_zero_vel     = (mag < 1e-6) and (math.abs(y_vel) < 1e-6)
+
+        if _arc_was_zero_velocity and not is_zero_vel then
+            _arc_last_zero_to_nonzero = tick()
+        end
+        _arc_was_zero_velocity = is_zero_vel
+
         local total, disabled = _arc_countDisabledMotors(char)
-        local isRagdolled = total >= 12 and (disabled / total) >= 0.9
+        local isRagdolled     = total >= 12 and (disabled / total) >= 0.9
 
         if isRagdolled then
-            -- Save original spot once
+            -- Save original spot and decide delay once per ragdoll
             if not _arc_originalCFrame then
                 _arc_originalCFrame = hrp.CFrame
+                local now = tick()
+                _arc_delay_time = 0.1
+                if _arc_last_zero_to_nonzero and (now - _arc_last_zero_to_nonzero) < 1 then
+                    _arc_delay_time = 3
+                end
             end
 
             -- Persistent pin to safe CFrame during ragdoll
@@ -602,9 +616,9 @@ local function _arc_onCharacterAdded(char)
                 _arc_hasCleanedThisRagdoll = true
             end
         else
-            -- Ragdoll ended → schedule return after 0.1s
+            -- Ragdoll ended → return after determined delay (0.1s or 3s)
             if _arc_originalCFrame and not _arc_returnTask then
-                _arc_returnTask = task.delay(0.1, function()
+                _arc_returnTask = task.delay(_arc_delay_time, function()
                     if hrp and hrp.Parent and _arc_originalCFrame then
                         hrp.CFrame = _arc_originalCFrame
                         task.delay(0.05, function()
@@ -614,6 +628,7 @@ local function _arc_onCharacterAdded(char)
                         end)
                     end
                     _arc_originalCFrame = nil
+                    _arc_delay_time     = nil
                     _arc_returnTask     = nil
                 end)
             end
@@ -640,10 +655,13 @@ local function stopAntiRagCombo()
         _arc_returnTask = nil
     end
     _arc_originalCFrame        = nil
+    _arc_delay_time            = nil
     _arc_hasCleanedThisRagdoll = false
+    _arc_last_zero_to_nonzero  = nil
+    _arc_was_zero_velocity     = false
 end
 
--- Restart on respawn (mirrors LocalPlayer.CharacterAdded in standalone script)
+-- Restart on respawn
 LocalPlayer.CharacterAdded:Connect(function(char)
     if AntiRagComboEnabled then
         task.spawn(_arc_onCharacterAdded, char)
