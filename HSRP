@@ -37,6 +37,7 @@ do
         RainbowTag = nil,
         DeathTP = nil,
         AntiRagdoll = nil,
+        ClickToAdd = nil, -- Added Keybind Slot
     }
 
     local ScriptUnloaded = false
@@ -78,7 +79,6 @@ do
         end
     end
 
-    -- ANTI RAGDOLL LOGIC (UNTOUCHED)
     local function cleanRagdoll(character)
         if not character or not AntiRagdollEnabled then return end
         local humanoid = character:FindFirstChildOfClass("Humanoid")
@@ -183,20 +183,13 @@ do
         end
     end)
 
-    safeConnect(UserInputService.InputBegan, function(input, gp)
-        if gp then return end
-        if input.KeyCode == Enum.KeyCode.Insert or input.KeyCode == Enum.KeyCode.LeftControl then 
-            MainFrame.Visible = not MainFrame.Visible 
-        end
-    end)
-
     local ContentArea = Instance.new("ScrollingFrame")
     ContentArea.Size = UDim2.new(1, -30, 1, -30)
     ContentArea.Position = UDim2.new(0, 15, 0, 15)
     ContentArea.BackgroundTransparency = 1
     ContentArea.ScrollBarThickness = 3
     ContentArea.ScrollBarImageColor3 = Color3.fromRGB(100, 180, 255)
-    ContentArea.CanvasSize = UDim2.new(0, 0, 0, 1000)
+    ContentArea.CanvasSize = UDim2.new(0, 0, 0, 1100)
     ContentArea.ZIndex = 2
     ContentArea.Parent = MainFrame
 
@@ -369,6 +362,7 @@ do
         return slider
     end
 
+    -- SECTION CREATION
     local KillAuraSection = createSection("KillAura", 1)
     KillAuraSection.Size = UDim2.new(0.94, 0, 0, 150)
     createToggle("KillAura Enabled", KillAuraSection, function(state) KillAuraEnabled = state if state then startKillAura() else stopKillAura() end end, 1, "KillAura")
@@ -390,14 +384,15 @@ do
     DeathTPSection.Size = UDim2.new(0.94, 0, 0, 60)
     createToggle("Death TP Enabled", DeathTPSection, function(state) DeathTPEnabled = state if not state then deathCFrame = nil end end, 1, "DeathTP")
 
-    local AntiRagdollSection = createSection("Anti Ragdoll (BUGGY)", 5)
+    local AntiRagdollSection = createSection("Anti Ragdoll", 5)
     AntiRagdollSection.Size = UDim2.new(0.94, 0, 0, 60)
     createToggle("Anti Ragdoll Enabled", AntiRagdollSection, function(state) AntiRagdollEnabled = state if state and LocalPlayer.Character then cleanRagdoll(LocalPlayer.Character) end end, 1, "AntiRagdoll")
 
     local FriendsSection = createSection("Friends List", 6)
-    FriendsSection.Size = UDim2.new(0.94, 0, 0, 150)
+    FriendsSection.Size = UDim2.new(0.94, 0, 0, 180)
     
-    createToggle("Click to Add Friend", FriendsSection, function(state) ClickToAddEnabled = state end, 1)
+    -- CLICK TO ADD TOGGLE WITH KEYBIND SUPPORT
+    createToggle("Click/Tap to Add", FriendsSection, function(state) ClickToAddEnabled = state end, 1, "ClickToAdd")
 
     local friendsBox = Instance.new("Frame")
     friendsBox.Size = UDim2.new(1, -10, 0, 32)
@@ -440,17 +435,45 @@ do
     end
     friendsText:GetPropertyChangedSignal("Text"):Connect(function() parseFriends(friendsText.Text) end)
 
-    -- CLICK TO ADD LOGIC
-    safeConnect(Mouse.Button1Down, function()
-        if not ClickToAddEnabled or not Mouse.Target then return end
-        local model = Mouse.Target:FindFirstAncestorOfClass("Model")
-        if model then
-            local player = Players:GetPlayerFromCharacter(model)
-            if player and player ~= LocalPlayer then
-                local name = player.Name
-                local currentText = friendsText.Text
-                if not currentText:lower():find(name:lower()) then
-                    friendsText.Text = currentText .. (currentText == "" and "" or " ") .. name
+    -- COMBINED MOBILE & PC CLICK TO ADD LOGIC
+    safeConnect(UserInputService.InputBegan, function(input, gp)
+        if gp or not ClickToAddEnabled then return end
+        
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            local pos = input.Position
+            local unitRay = workspace.CurrentCamera:ViewportPointToRay(pos.X, pos.Y)
+            
+            local raycastParams = RaycastParams.new()
+            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+            raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+            
+            local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 1000, raycastParams)
+            
+            if result and result.Instance then
+                local model = result.Instance:FindFirstAncestorOfClass("Model")
+                if model then
+                    local player = Players:GetPlayerFromCharacter(model)
+                    if player and player ~= LocalPlayer then
+                        local name = player.Name
+                        local currentText = friendsText.Text
+                        
+                        -- Add/Remove Logic
+                        local names = {}
+                        local found = false
+                        for n in currentText:gmatch("%S+") do
+                            if n:lower() == name:lower() then
+                                found = true
+                            else
+                                table.insert(names, n)
+                            end
+                        end
+                        
+                        if not found then
+                            table.insert(names, name)
+                        end
+                        
+                        friendsText.Text = table.concat(names, " ")
+                    end
                 end
             end
         end
@@ -462,6 +485,7 @@ do
         return false
     end
 
+    -- HITBOX RENDERER
     RunService.RenderStepped:Connect(function()
         for _, player in ipairs(Players:GetPlayers()) do
             if player == LocalPlayer or not player.Character then continue end
@@ -489,6 +513,7 @@ do
         end
     end)
 
+    -- COMBAT LOGIC
     local RE = {HitRemote = nil, PunchDoRemote = nil}
     task.spawn(function()
         task.wait(1)
@@ -536,8 +561,12 @@ do
 
     function stopKillAura() if auraLoop then auraLoop:Disconnect() auraLoop = nil end end
 
+    -- GLOBAL KEYBIND HANDLER
     safeConnect(UserInputService.InputBegan, function(input, gp)
         if gp then return end
+        if input.KeyCode == Enum.KeyCode.Insert or input.KeyCode == Enum.KeyCode.LeftControl then 
+            MainFrame.Visible = not MainFrame.Visible 
+        end
         for k, data in pairs(ToggleCallbacks) do
             local kc = data.getKey and data.getKey()
             if kc and input.KeyCode == kc then data.toggle() end
