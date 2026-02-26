@@ -71,6 +71,8 @@ do
         AntiRagdoll = nil,
         ClickToAdd = nil,
         TargetStrafe = nil,
+        TargetBackstab = nil,
+        Respawn = nil,
     }
 
     local ScriptUnloaded = false
@@ -377,6 +379,16 @@ do
 
         local lookAt = Vector3.new(targetPos.X, myHRP.Position.Y, targetPos.Z)
         myHRP.CFrame = CFrame.new(newPos, lookAt)
+
+        -- When floating (positive offset), suppress gravity so Roblox doesn't
+        -- think we're falling and accumulate downward velocity
+        local myHum = myChar:FindFirstChildOfClass("Humanoid")
+        if StrafeGroundOffset > 0 then
+            if myHum then myHum.PlatformStand = true end
+            myHRP.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        else
+            if myHum then myHum.PlatformStand = false end
+        end
     end)
 
     local ScreenGui = Instance.new("ScreenGui")
@@ -631,12 +643,18 @@ do
 
     createToggle("Target Strafe Enabled", TargetsSection, function(state) 
         TargetStrafeEnabled = state 
-        strafeAngle = 0 
+        strafeAngle = 0
+        -- If turning off, restore gravity
+        if not state then
+            local myChar = LocalPlayer.Character
+            local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+            if myHum then myHum.PlatformStand = false end
+        end
     end, 1, "TargetStrafe")
 
     createToggle("Target Backstab (stay behind)", TargetsSection, function(state) 
         TargetBackstabEnabled = state 
-    end, 2)
+    end, 2, "TargetBackstab")
 
     createToggle("Target Nametags (through walls)", TargetsSection, function(state)
         TargetNametagsEnabled = state
@@ -723,7 +741,7 @@ do
 
     createSlider("Strafe Radius", 2, 30, 8, TargetsSection, function(v) TargetStrafeRadius = v end, 8)
     createSlider("Strafe Speed", 1, 20, 3, TargetsSection, function(v) TargetStrafeSpeed = v end, 9)
-    createSlider("Ground Offset", -15, 5, -3, TargetsSection, function(v) StrafeGroundOffset = v end, 10)
+    createSlider("Ground Offset", -15, 10, -3, TargetsSection, function(v) StrafeGroundOffset = v end, 10)
 
     local function parseTargets(text)
         TargetNamesList = {}
@@ -795,7 +813,68 @@ do
     DeathTPSection.Size = UDim2.new(0.94, 0, 0, 60)
     createToggle("Death TP Enabled", DeathTPSection, function(state) DeathTPEnabled = state if not state then deathCFrame = nil end end, 1, "DeathTP")
 
-    local AntiRagdollSection = createSection("Anti Ragdoll", 7)
+    local RespawnSection = createSection("Respawn", 7)
+    RespawnSection.Size = UDim2.new(0.94, 0, 0, 60)
+
+    local respawnBtn = Instance.new("TextButton")
+    respawnBtn.Size = UDim2.new(1, -10, 0, 26)
+    respawnBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    respawnBtn.BorderSizePixel = 0
+    respawnBtn.Text = "Respawn"
+    respawnBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    respawnBtn.Font = Enum.Font.GothamSemibold
+    respawnBtn.TextSize = 13
+    respawnBtn.LayoutOrder = 1
+    respawnBtn.Parent = RespawnSection
+    Instance.new("UICorner", respawnBtn).CornerRadius = UDim.new(0, 6)
+    local respawnStroke = Instance.new("UIStroke", respawnBtn)
+    respawnStroke.Color = Color3.fromRGB(100, 180, 255)
+    respawnStroke.Thickness = 1
+
+    local respawnBindBtn = Instance.new("TextButton")
+    respawnBindBtn.Size = UDim2.new(0, 45, 0, 18)
+    respawnBindBtn.Position = UDim2.new(1, -50, 0, 4)
+    respawnBindBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    respawnBindBtn.Font = Enum.Font.GothamBold
+    respawnBindBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    respawnBindBtn.TextSize = 10
+    respawnBindBtn.Text = "None"
+    respawnBindBtn.Parent = respawnBtn
+    Instance.new("UICorner", respawnBindBtn).CornerRadius = UDim.new(0, 4)
+
+    local respawnWaitingForKey = false
+    respawnBindBtn.MouseButton1Click:Connect(function()
+        respawnWaitingForKey = true
+        respawnBindBtn.Text = "..."
+    end)
+    safeConnect(UserInputService.InputBegan, function(input, gp)
+        if respawnWaitingForKey and input.UserInputType == Enum.UserInputType.Keyboard and not gp then
+            if input.KeyCode == Enum.KeyCode.Escape then
+                Keybinds.Respawn = nil
+                respawnBindBtn.Text = "None"
+            else
+                Keybinds.Respawn = input.KeyCode
+                respawnBindBtn.Text = input.KeyCode.Name
+            end
+            respawnWaitingForKey = false
+        end
+    end)
+
+    local function doRespawn()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.Health = 0 end
+    end
+
+    respawnBtn.MouseButton1Click:Connect(function()
+        doRespawn()
+        respawnBtn.BackgroundColor3 = Color3.fromRGB(100, 180, 255)
+        task.delay(0.15, function()
+            respawnBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+        end)
+    end)
+
+    local AntiRagdollSection = createSection("Anti Ragdoll", 8)
     AntiRagdollSection.Size = UDim2.new(0.94, 0, 0, 60)
     createToggle("Anti Ragdoll Enabled", AntiRagdollSection, function(state) AntiRagdollEnabled = state if state and LocalPlayer.Character then cleanRagdoll(LocalPlayer.Character) end end, 1, "AntiRagdoll")
 
@@ -889,6 +968,9 @@ do
         for k, data in pairs(ToggleCallbacks) do
             local kc = data.getKey and data.getKey()
             if kc and input.KeyCode == kc then data.toggle() end
+        end
+        if Keybinds.Respawn and input.KeyCode == Keybinds.Respawn then
+            doRespawn()
         end
     end)
 
