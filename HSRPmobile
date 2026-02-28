@@ -3,6 +3,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 local Camera = workspace.CurrentCamera
@@ -31,6 +32,7 @@ local TargetNametagsEnabled = false
 local TeleportAuraEnabled = false
 local SilentAutoBlockEnabled = false
 local AntiRagComboEnabled = false
+local SpamGrabEnabled = false
 local deathCFrame = nil
 local strafeAngle = 0
 
@@ -85,6 +87,9 @@ local Keybinds = {
     Respawn = nil,
     SilentAutoBlock = nil,
     AntiRagCombo = nil,
+    TeleportAura = nil,
+    SpamGrab = nil,
+    GrabTarget = nil,
 }
 
 local ScriptUnloaded = false
@@ -482,9 +487,7 @@ local function stopTeleportAura()
     end
 end
 
--- ============================================================
 -- SILENT AUTO BLOCK
--- ============================================================
 local autoBlockConnection = nil
 
 local function startAutoBlock()
@@ -504,10 +507,86 @@ local function stopAutoBlock()
     end
 end
 
--- ============================================================
--- ANTI RAG COMBO (v1.8 port — fully independent)
--- ============================================================
+-- SPAM GRAB
+local spamGrabThread = nil
 
+local function startSpamGrab()
+    if spamGrabThread then return end
+    spamGrabThread = task.spawn(function()
+        while SpamGrabEnabled do
+            pcall(function()
+                ReplicatedStorage.Packages.Knit.Services.CombatService.RF.Grab:InvokeServer()
+            end)
+            task.wait()
+        end
+        spamGrabThread = nil
+    end)
+end
+
+local function stopSpamGrab()
+    SpamGrabEnabled = false
+    spamGrabThread = nil
+end
+
+-- GRAB TARGET (cycles through TargetNamesList each call)
+local GrabRF = nil
+local grabTargetIndex = 1
+task.spawn(function()
+    task.wait(1)
+    pcall(function()
+        GrabRF = ReplicatedStorage.Packages.Knit.Services.CombatService.RF.Grab
+    end)
+end)
+
+local _arc_ignoreVelocity = false
+
+local function doGrabTarget()
+    if #TargetNamesList == 0 then return end
+
+    -- cycle index
+    if grabTargetIndex > #TargetNamesList then grabTargetIndex = 1 end
+    local search = TargetNamesList[grabTargetIndex]
+    grabTargetIndex = grabTargetIndex + 1
+
+    local myChar = LocalPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return end
+
+    -- find the target player
+    local targetPlayer = nil
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            if p.Name:lower():find(search, 1, true) or (p.DisplayName and p.DisplayName:lower():find(search, 1, true)) then
+                targetPlayer = p
+                break
+            end
+        end
+    end
+    if not targetPlayer or not targetPlayer.Character then return end
+    local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not targetHRP then return end
+
+    local originalCFrame = myHRP.CFrame
+
+    -- suppress arc velocity tracking so the tp doesn't look like a grab hit
+    _arc_ignoreVelocity = true
+
+    -- tp directly to target
+    myHRP.CFrame = targetHRP.CFrame
+
+    task.wait()
+    pcall(function() GrabRF:InvokeServer() end)
+    task.wait(0.1)
+
+    myHRP.CFrame = originalCFrame
+
+    -- resume arc velocity tracking after a brief extra settling period
+    task.delay(0.3, function()
+        _arc_ignoreVelocity = false
+    end)
+end
+
+-- ANTI RAG COMBO
 local _arc_targetCFrame = CFrame.new(-502.844818, 10.1868954, -65.4427567, 0.560596228, 2.67291544e-09, -0.828089297, -2.95736768e-08, 1, -1.67928462e-08, 0.828089297, 3.39036497e-08, 0.560596228)
 local _arc_safeCFrame   = _arc_targetCFrame + Vector3.new(0, 1, 0)
 
@@ -582,14 +661,19 @@ local function _arc_onCharacterAdded(char)
             return
         end
 
-        -- Velocity tracking (zero → non-zero transition)
         local hrp_vel     = hrp.AssemblyLinearVelocity
         local mag         = hrp_vel.Magnitude
         local y_vel       = hrp_vel.Y
         local is_zero_vel = (mag < 1e-6) and (math.abs(y_vel) < 1e-6)
 
+        -- FIX: velocity tracking always runs so zero->nonzero transitions are
+        -- never missed. _arc_ignoreVelocity only suppresses the timestamp update,
+        -- meaning a grab-tp won't falsely trigger the 3.5s delay, but real
+        -- ragdoll-throws still will.
         if _arc_was_zero_velocity and not is_zero_vel then
-            _arc_last_zero_to_nonzero = tick()
+            if not _arc_ignoreVelocity then
+                _arc_last_zero_to_nonzero = tick()
+            end
         end
         _arc_was_zero_velocity = is_zero_vel
 
@@ -597,7 +681,6 @@ local function _arc_onCharacterAdded(char)
         local isRagdolled     = total >= 12 and (disabled / total) >= 0.9
 
         if isRagdolled then
-            -- Save original spot and decide delay once per ragdoll
             if not _arc_originalCFrame then
                 _arc_originalCFrame = hrp.CFrame
                 local now = tick()
@@ -607,16 +690,13 @@ local function _arc_onCharacterAdded(char)
                 end
             end
 
-            -- Persistent pin to safe CFrame during ragdoll
             hrp.CFrame = _arc_safeCFrame
 
-            -- One-time cleanup to allow movement
             if not _arc_hasCleanedThisRagdoll then
                 _arc_forceEndRagdoll(char)
                 _arc_hasCleanedThisRagdoll = true
             end
         else
-            -- Ragdoll ended → return after determined delay (0.1s or 3.5s)
             if _arc_originalCFrame and not _arc_returnTask then
                 _arc_returnTask = task.delay(_arc_delay_time, function()
                     if hrp and hrp.Parent and _arc_originalCFrame then
@@ -661,12 +741,137 @@ local function stopAntiRagCombo()
     _arc_was_zero_velocity     = false
 end
 
--- Restart on respawn
 LocalPlayer.CharacterAdded:Connect(function(char)
     if AntiRagComboEnabled then
         task.spawn(_arc_onCharacterAdded, char)
     end
 end)
+
+-- CONFIG SYSTEM
+local CONFIG_KEY = "FXCKER_Config"
+
+local function getConfig()
+    return {
+        toggles = {
+            KillAuraEnabled = KillAuraEnabled,
+            HitboxEnabled = HitboxEnabled,
+            HitboxVisible = HitboxVisible,
+            RainbowTagEnabled = RainbowTagEnabled,
+            DeathTPEnabled = DeathTPEnabled,
+            AntiRagdollEnabled = AntiRagdollEnabled,
+            ClickToAddEnabled = ClickToAddEnabled,
+            TargetStrafeEnabled = TargetStrafeEnabled,
+            TargetBackstabEnabled = TargetBackstabEnabled,
+            HighlightFriendsEnabled = HighlightFriendsEnabled,
+            TargetNametagsEnabled = TargetNametagsEnabled,
+            TeleportAuraEnabled = TeleportAuraEnabled,
+            SilentAutoBlockEnabled = SilentAutoBlockEnabled,
+            AntiRagComboEnabled = AntiRagComboEnabled,
+            SpamGrabEnabled = SpamGrabEnabled,
+        },
+        sliders = {
+            HitboxSize = HitboxSize,
+            KillAuraRange = KillAuraRange,
+            AttacksPerSecond = AttacksPerSecond,
+            RainbowSpeed = RainbowSpeed,
+            TargetStrafeRadius = TargetStrafeRadius,
+            TargetStrafeSpeed = TargetStrafeSpeed,
+            StrafeGroundOffset = StrafeGroundOffset,
+            TeleportAuraRadius = TeleportAuraRadius,
+            TeleportAuraHeightMin = TeleportAuraHeightMin,
+            TeleportAuraHeightMax = TeleportAuraHeightMax,
+            TeleportAuraDelay = TeleportAuraDelay,
+        },
+        friends = table.concat(FriendsNamesList, " "),
+        targets = table.concat(TargetNamesList, " "),
+        strafeTarget = TargetStrafeTargetName,
+        keybinds = (function()
+            local kb = {}
+            for k, v in pairs(Keybinds) do
+                kb[k] = v and v.Name or nil
+            end
+            return kb
+        end)(),
+    }
+end
+
+local savedConfigs = {}
+
+local function saveConfig(name)
+    savedConfigs[name] = getConfig()
+    pcall(function()
+        local encoded = HttpService:JSONEncode(savedConfigs)
+        writefile("fxcker_configs.json", encoded)
+    end)
+end
+
+local function loadFile()
+    pcall(function()
+        local data = readfile("fxcker_configs.json")
+        if data and data ~= "" then
+            local decoded = HttpService:JSONDecode(data)
+            if decoded and type(decoded) == "table" then
+                savedConfigs = decoded
+            end
+        end
+    end)
+end
+
+loadFile()
+
+-- After GUI is fully built, call this to sync keybind button displays
+local function refreshKeybindDisplays()
+    for k, keyCode in pairs(Keybinds) do
+        if keyCode and ToggleCallbacks[k] and ToggleCallbacks[k].setKeybind then
+            ToggleCallbacks[k].setKeybind(keyCode)
+        end
+    end
+end
+
+-- These will be set after GUI is built so toggles can be applied
+local ToggleSetters = {}
+local SliderSetters = {}
+local friendsTextRef = nil
+local targetTextRef = nil
+local strafeTargetBoxRef = nil
+
+local function applyConfig(cfg)
+    if not cfg then return end
+    -- apply sliders
+    if cfg.sliders then
+        for k, v in pairs(cfg.sliders) do
+            if SliderSetters[k] then SliderSetters[k](v) end
+        end
+    end
+    -- apply friends/targets text
+    if cfg.friends and friendsTextRef then friendsTextRef.Text = cfg.friends end
+    if cfg.targets and targetTextRef then targetTextRef.Text = cfg.targets end
+    if cfg.strafeTarget and strafeTargetBoxRef then
+        strafeTargetBoxRef.Text = cfg.strafeTarget
+        TargetStrafeTargetName = cfg.strafeTarget
+    end
+    -- apply keybinds
+    if cfg.keybinds then
+        for k, vName in pairs(cfg.keybinds) do
+            if vName and type(vName) == "string" then
+                local ok, keyCode = pcall(function()
+                    return Enum.KeyCode[vName]
+                end)
+                if ok and keyCode then
+                    Keybinds[k] = keyCode
+                end
+            end
+        end
+    end
+    -- apply toggles last so they use correct slider values
+    if cfg.toggles then
+        for k, v in pairs(cfg.toggles) do
+            if ToggleSetters[k] then ToggleSetters[k](v) end
+        end
+    end
+    -- refresh all keybind button displays now that ToggleCallbacks is populated
+    refreshKeybindDisplays()
+end
 
 -- GUI
 local ScreenGui = Instance.new("ScreenGui")
@@ -731,7 +936,7 @@ ContentArea.Position = UDim2.new(0, 15, 0, 15)
 ContentArea.BackgroundTransparency = 1
 ContentArea.ScrollBarThickness = 3
 ContentArea.ScrollBarImageColor3 = Color3.fromRGB(100, 180, 255)
-ContentArea.CanvasSize = UDim2.new(0, 0, 0, 1850)
+ContentArea.CanvasSize = UDim2.new(0, 0, 0, 2400)
 ContentArea.ZIndex = 2
 ContentArea.Parent = MainFrame
 
@@ -835,8 +1040,20 @@ local function createToggle(text, parent, callback, order, keybindKey)
     if keybindKey then
         ToggleCallbacks[keybindKey] = {
             toggle = function() setEnabled(not enabled) end,
-            getKey = function() return Keybinds[keybindKey] end
+            getKey = function() return Keybinds[keybindKey] end,
+            setKeybind = function(keyCode)
+                Keybinds[keybindKey] = keyCode
+                bindBtn.Text = keyCode and keyCode.Name or "None"
+            end
         }
+        -- expose setter for config load
+        ToggleSetters[keybindKey .. "Enabled"] = function(state)
+            if state ~= enabled then setEnabled(state) end
+        end
+        -- also expose by raw name for toggles without keybind suffix match
+        ToggleSetters[text:gsub(" ", "") .. "Enabled"] = function(state)
+            if state ~= enabled then setEnabled(state) end
+        end
     end
 
     safeConnect(UserInputService.InputBegan, function(input, gp)
@@ -852,7 +1069,7 @@ local function createToggle(text, parent, callback, order, keybindKey)
         end
     end)
 
-    return toggle
+    return toggle, setEnabled
 end
 
 local function createSlider(text, min, max, default, parent, callback, order)
@@ -969,24 +1186,27 @@ local function createSlider(text, min, max, default, parent, callback, order)
         end
     end)
 
-    return sliderFrame
+    return sliderFrame, setValue
 end
 
 -- SECTIONS
 local KillAuraSection = createSection("KillAura", 1)
 KillAuraSection.Size = UDim2.new(0.94, 0, 0, 170)
 createToggle("KillAura Enabled", KillAuraSection, function(state) KillAuraEnabled = state if state then startKillAura() else stopKillAura() end end, 1, "KillAura")
-createSlider("KillAura Range", 5, 50, 20, KillAuraSection, function(v) KillAuraRange = v end, 2)
-createSlider("Attacks/s", 1, 3000, 15, KillAuraSection, function(v) AttacksPerSecond = v end, 3)
+local _, setKARange = createSlider("KillAura Range", 5, 50, 20, KillAuraSection, function(v) KillAuraRange = v end, 2)
+local _, setAPS = createSlider("Attacks/s", 1, 3000, 15, KillAuraSection, function(v) AttacksPerSecond = v end, 3)
+SliderSetters["KillAuraRange"] = setKARange
+SliderSetters["AttacksPerSecond"] = setAPS
 
 local HitboxSection = createSection("Hitbox", 2)
 HitboxSection.Size = UDim2.new(0.94, 0, 0, 155)
 createToggle("Hitbox Enabled", HitboxSection, function(state) HitboxEnabled = state end, 1, "Hitbox")
 createToggle("Hitbox Visible", HitboxSection, function(state) HitboxVisible = state end, 2, "HitboxVisible")
-createSlider("Hitbox Size", 1, 50, 10, HitboxSection, function(v) HitboxSize = v end, 3)
+local _, setHBSize = createSlider("Hitbox Size", 1, 50, 10, HitboxSection, function(v) HitboxSize = v end, 3)
+SliderSetters["HitboxSize"] = setHBSize
 
 local TargetsSection = createSection("Targets", 3)
-TargetsSection.Size = UDim2.new(0.94, 0, 0, 650)
+TargetsSection.Size = UDim2.new(0.94, 0, 0, 680)
 
 createToggle("Target Strafe Enabled", TargetsSection, function(state)
     TargetStrafeEnabled = state
@@ -1002,10 +1222,26 @@ createToggle("Target Backstab (stay behind)", TargetsSection, function(state)
     TargetBackstabEnabled = state
 end, 2, "TargetBackstab")
 
-createToggle("Teleport Aura", TargetsSection, function(state)
-    TeleportAuraEnabled = state
-    if state then startTeleportAura() else stopTeleportAura() end
-end, 3)
+do
+    local _, tpAuraSetter = createToggle("Teleport Aura", TargetsSection, function(state)
+        TeleportAuraEnabled = state
+        if state then startTeleportAura() else stopTeleportAura() end
+    end, 3, "TeleportAura")
+    ToggleSetters["TeleportAuraEnabled"] = function(state) tpAuraSetter(state) end
+end
+
+do
+    local _, grabToggleSetter
+    _, grabToggleSetter = createToggle("Grab Target", TargetsSection, function(state)
+        if state then
+            task.spawn(function()
+                doGrabTarget()
+                task.wait(0.2)
+                grabToggleSetter(false)
+            end)
+        end
+    end, 4, "GrabTarget")
+end
 
 createToggle("Target Nametags (through walls)", TargetsSection, function(state)
     TargetNametagsEnabled = state
@@ -1048,11 +1284,13 @@ targetText.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 targetText.TextColor3 = Color3.fromRGB(255, 255, 255)
 targetText.Font = Enum.Font.Gotham
 targetText.TextSize = 12
+targetText.Text = ""
 targetText.PlaceholderText = "target1 target2..."
 targetText.ClearTextOnFocus = false
 targetText.ZIndex = 5
 targetText.Parent = targetBoxFrame
 Instance.new("UICorner", targetText).CornerRadius = UDim.new(0, 4)
+targetTextRef = targetText
 
 local targetCount = Instance.new("TextLabel")
 targetCount.Size = UDim2.new(1, -10, 0, 16)
@@ -1089,6 +1327,7 @@ strafeTargetBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 strafeTargetBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 strafeTargetBox.Font = Enum.Font.Gotham
 strafeTargetBox.TextSize = 12
+strafeTargetBox.Text = ""
 strafeTargetBox.PlaceholderText = "target name..."
 strafeTargetBox.ClearTextOnFocus = false
 strafeTargetBox.ZIndex = 5
@@ -1097,14 +1336,22 @@ Instance.new("UICorner", strafeTargetBox).CornerRadius = UDim.new(0, 4)
 strafeTargetBox:GetPropertyChangedSignal("Text"):Connect(function()
     TargetStrafeTargetName = strafeTargetBox.Text
 end)
+strafeTargetBoxRef = strafeTargetBox
 
-createSlider("Strafe Radius", 2, 30, 8, TargetsSection, function(v) TargetStrafeRadius = v end, 9)
-createSlider("Strafe Speed", 1, 20, 3, TargetsSection, function(v) TargetStrafeSpeed = v end, 10)
-createSlider("Ground Offset", -15, 10, -3, TargetsSection, function(v) StrafeGroundOffset = v end, 11)
-createSlider("TP Aura Radius", 5, 30, 15, TargetsSection, function(v) TeleportAuraRadius = v end, 12)
-createSlider("TP Height Min", 0, 10, 0, TargetsSection, function(v) TeleportAuraHeightMin = v end, 13)
-createSlider("TP Height Max", 0, 10, 10, TargetsSection, function(v) TeleportAuraHeightMax = v end, 14)
-createSlider("TP Aura Delay (0=instant, 100=slow)", 0, 100, 0, TargetsSection, function(v) TeleportAuraDelay = v end, 15)
+local _, setStrafeRadius = createSlider("Strafe Radius", 2, 30, 8, TargetsSection, function(v) TargetStrafeRadius = v end, 9)
+local _, setStrafeSpeed = createSlider("Strafe Speed", 1, 20, 3, TargetsSection, function(v) TargetStrafeSpeed = v end, 10)
+local _, setGroundOffset = createSlider("Ground Offset", -15, 10, -3, TargetsSection, function(v) StrafeGroundOffset = v end, 11)
+local _, setTPRadius = createSlider("TP Aura Radius", 5, 30, 15, TargetsSection, function(v) TeleportAuraRadius = v end, 12)
+local _, setTPHMin = createSlider("TP Height Min", 0, 10, 0, TargetsSection, function(v) TeleportAuraHeightMin = v end, 13)
+local _, setTPHMax = createSlider("TP Height Max", 0, 10, 10, TargetsSection, function(v) TeleportAuraHeightMax = v end, 14)
+local _, setTPDelay = createSlider("TP Aura Delay (0=instant, 100=slow)", 0, 100, 0, TargetsSection, function(v) TeleportAuraDelay = v end, 15)
+SliderSetters["TargetStrafeRadius"] = setStrafeRadius
+SliderSetters["TargetStrafeSpeed"] = setStrafeSpeed
+SliderSetters["StrafeGroundOffset"] = setGroundOffset
+SliderSetters["TeleportAuraRadius"] = setTPRadius
+SliderSetters["TeleportAuraHeightMin"] = setTPHMin
+SliderSetters["TeleportAuraHeightMax"] = setTPHMax
+SliderSetters["TeleportAuraDelay"] = setTPDelay
 
 local function parseTargets(text)
     TargetNamesList = {}
@@ -1148,11 +1395,13 @@ friendsText.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 friendsText.TextColor3 = Color3.fromRGB(255, 255, 255)
 friendsText.Font = Enum.Font.Gotham
 friendsText.TextSize = 12
+friendsText.Text = ""
 friendsText.PlaceholderText = "friend1 friend2..."
 friendsText.ClearTextOnFocus = false
 friendsText.ZIndex = 5
 friendsText.Parent = friendsBox
 Instance.new("UICorner", friendsText).CornerRadius = UDim.new(0, 4)
+friendsTextRef = friendsText
 
 local friendsCount = Instance.new("TextLabel")
 friendsCount.Size = UDim2.new(1, -10, 0, 16)
@@ -1175,7 +1424,8 @@ friendsText:GetPropertyChangedSignal("Text"):Connect(function() parseFriends(fri
 local RainbowSection = createSection("Rainbow Tag", 5)
 RainbowSection.Size = UDim2.new(0.94, 0, 0, 130)
 createToggle("Rainbow Enabled", RainbowSection, function(state) RainbowTagEnabled = state if state then startRainbow() else stopRainbow() end end, 1, "RainbowTag")
-createSlider("Rainbow Speed", 1, 100, 10, RainbowSection, function(v) RainbowSpeed = v end, 2)
+local _, setRainbowSpeed = createSlider("Rainbow Speed", 1, 100, 10, RainbowSection, function(v) RainbowSpeed = v end, 2)
+SliderSetters["RainbowSpeed"] = setRainbowSpeed
 
 local DeathTPSection = createSection("Death TP", 6)
 DeathTPSection.Size = UDim2.new(0.94, 0, 0, 60)
@@ -1264,6 +1514,117 @@ createToggle("Anti Rag Combo Enabled", AntiRagComboSection, function(state)
     AntiRagComboEnabled = state
     if state then startAntiRagCombo() else stopAntiRagCombo() end
 end, 1, "AntiRagCombo")
+
+-- SPAM GRAB SECTION
+local SpamGrabSection = createSection("Spam Grab", 11)
+SpamGrabSection.Size = UDim2.new(0.94, 0, 0, 60)
+createToggle("Spam Grab Enabled", SpamGrabSection, function(state)
+    SpamGrabEnabled = state
+    if state then startSpamGrab() else stopSpamGrab() end
+end, 1, "SpamGrab")
+
+-- CONFIG SECTION
+local ConfigSection = createSection("Configs", 12)
+ConfigSection.Size = UDim2.new(0.94, 0, 0, 280)
+
+local configNameBox = Instance.new("TextBox")
+configNameBox.Size = UDim2.new(1, -10, 0, 32)
+configNameBox.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+configNameBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+configNameBox.Font = Enum.Font.Gotham
+configNameBox.TextSize = 12
+configNameBox.Text = ""
+configNameBox.PlaceholderText = "Config name..."
+configNameBox.ClearTextOnFocus = false
+configNameBox.LayoutOrder = 1
+configNameBox.ZIndex = 4
+configNameBox.Parent = ConfigSection
+Instance.new("UICorner", configNameBox).CornerRadius = UDim.new(0, 6)
+
+local function makeConfigBtn(text, color, order, onClick)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, -10, 0, 32)
+    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    btn.BorderSizePixel = 0
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    btn.Font = Enum.Font.GothamSemibold
+    btn.TextSize = 13
+    btn.LayoutOrder = order
+    btn.ZIndex = 4
+    btn.Parent = ConfigSection
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+    local stroke = Instance.new("UIStroke", btn)
+    stroke.Color = color
+    stroke.Thickness = 1
+    btn.MouseButton1Click:Connect(function()
+        onClick(btn)
+        btn.BackgroundColor3 = color
+        task.delay(0.15, function() btn.BackgroundColor3 = Color3.fromRGB(25, 25, 35) end)
+    end)
+    return btn
+end
+
+local configListLabel = Instance.new("TextLabel")
+configListLabel.Size = UDim2.new(1, -10, 0, 16)
+configListLabel.BackgroundTransparency = 1
+configListLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+configListLabel.Font = Enum.Font.Gotham
+configListLabel.TextSize = 10
+configListLabel.Text = "Saved: none"
+configListLabel.TextXAlignment = Enum.TextXAlignment.Left
+configListLabel.LayoutOrder = 5
+configListLabel.ZIndex = 4
+configListLabel.Parent = ConfigSection
+
+local function refreshConfigList()
+    local names = {}
+    for k in pairs(savedConfigs) do table.insert(names, k) end
+    configListLabel.Text = "Saved: " .. (#names > 0 and table.concat(names, ", ") or "none")
+end
+
+makeConfigBtn("Save Config", Color3.fromRGB(100, 255, 100), 2, function()
+    local name = configNameBox.Text
+    if name == "" then name = "default" end
+    saveConfig(name)
+    refreshConfigList()
+    configNameBox.PlaceholderText = "Saved: " .. name
+end)
+
+makeConfigBtn("Load Config", Color3.fromRGB(100, 180, 255), 3, function()
+    local name = configNameBox.Text
+    if name == "" then name = "default" end
+    if savedConfigs[name] then
+        applyConfig(savedConfigs[name])
+        refreshKeybindDisplays()
+        configNameBox.PlaceholderText = "Loaded: " .. name
+    else
+        configNameBox.PlaceholderText = "Not found: " .. name
+    end
+end)
+
+makeConfigBtn("Delete Config", Color3.fromRGB(255, 80, 80), 4, function()
+    local name = configNameBox.Text
+    if name == "" then name = "default" end
+    savedConfigs[name] = nil
+    pcall(function()
+        local encoded = HttpService:JSONEncode(savedConfigs)
+        writefile("fxcker_configs.json", encoded)
+    end)
+    for k in pairs(Keybinds) do
+        Keybinds[k] = nil
+        if ToggleCallbacks[k] and ToggleCallbacks[k].setKeybind then
+            ToggleCallbacks[k].setKeybind(nil)
+        end
+    end
+    configNameBox.PlaceholderText = "Deleted: " .. name
+end)
+
+makeConfigBtn("Refresh List", Color3.fromRGB(200, 200, 100), 6, function()
+    refreshConfigList()
+end)
+
+refreshConfigList()
 
 -- HITBOX RENDERER
 RunService.RenderStepped:Connect(function()
@@ -1412,6 +1773,7 @@ game:BindToClose(function()
     for _, conn in ipairs(AllConnections) do pcall(function() conn:Disconnect() end) end
     stopAutoBlock()
     stopAntiRagCombo()
+    stopSpamGrab()
     if _arc_returnTask then task.cancel(_arc_returnTask) end
     for _, tag in pairs(FriendNametags) do pcall(function() tag:Destroy() end) end
     for _, tag in pairs(TargetNametags) do pcall(function() tag:Destroy() end) end
