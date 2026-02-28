@@ -538,7 +538,7 @@ task.spawn(function()
     end)
 end)
 
-local _arc_ignoreVelocity = false
+local _arc_ignoreVelocity = false -- kept for compatibility, no longer used by ARC
 
 local function doGrabTarget()
     if #TargetNamesList == 0 then return end
@@ -568,9 +568,6 @@ local function doGrabTarget()
 
     local originalCFrame = myHRP.CFrame
 
-    -- suppress arc velocity tracking so the tp doesn't look like a grab hit
-    _arc_ignoreVelocity = true
-
     -- tp directly to target
     myHRP.CFrame = targetHRP.CFrame
 
@@ -579,24 +576,20 @@ local function doGrabTarget()
     task.wait(0.1)
 
     myHRP.CFrame = originalCFrame
-
-    -- resume arc velocity tracking after a brief extra settling period
-    task.delay(0.3, function()
-        _arc_ignoreVelocity = false
-    end)
 end
 
 -- ANTI RAG COMBO
 local _arc_targetCFrame = CFrame.new(-502.844818, 10.1868954, -65.4427567, 0.560596228, 2.67291544e-09, -0.828089297, -2.95736768e-08, 1, -1.67928462e-08, 0.828089297, 3.39036497e-08, 0.560596228)
 local _arc_safeCFrame   = _arc_targetCFrame + Vector3.new(0, 1, 0)
 
+-- State variables
 local _arc_connection              = nil
+local _arc_platStandConn           = nil  -- watches PlatformStand changes
 local _arc_originalCFrame          = nil
-local _arc_delay_time              = nil
 local _arc_hasCleanedThisRagdoll   = false
 local _arc_returnTask              = nil
-local _arc_last_zero_to_nonzero    = nil
-local _arc_was_zero_velocity       = false
+local _arc_inReturnWindow          = false
+local _arc_wasGrabbed              = false  -- true when PlatformStand was seen as true
 
 local function _arc_countDisabledMotors(char)
     if not char then return 0, 0 end
@@ -638,22 +631,67 @@ local function _arc_forceEndRagdoll(char)
     end
 end
 
+local function _arc_doReturn(hrp, savedCFrame)
+    -- Teleport to safe zone first
+    if hrp and hrp.Parent then
+        hrp.CFrame = _arc_safeCFrame
+        hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+    end
+    -- Wait the cooldown, then return to original position
+    _arc_returnTask = task.delay(3.5, function()
+        if hrp and hrp.Parent and savedCFrame then
+            hrp.CFrame = savedCFrame
+            task.delay(0.05, function()
+                if hrp and hrp.Parent then
+                    hrp.AssemblyLinearVelocity = Vector3.new(0, -1, 0)
+                end
+            end)
+        end
+        _arc_originalCFrame        = nil
+        _arc_returnTask            = nil
+        _arc_hasCleanedThisRagdoll = false
+        _arc_inReturnWindow        = false
+        _arc_wasGrabbed            = false
+    end)
+end
+
 local function _arc_onCharacterAdded(char)
     local hrp = char:WaitForChild("HumanoidRootPart", 10)
     if not hrp then return end
+    local hum = char:WaitForChild("Humanoid", 10)
+    if not hum then return end
 
+    -- Clean up any previous connections/state
     if _arc_connection then _arc_connection:Disconnect() _arc_connection = nil end
+    if _arc_platStandConn then _arc_platStandConn:Disconnect() _arc_platStandConn = nil end
     _arc_originalCFrame        = nil
-    _arc_delay_time            = nil
     _arc_hasCleanedThisRagdoll = false
+    _arc_inReturnWindow        = false
+    _arc_wasGrabbed            = false
     if _arc_returnTask then task.cancel(_arc_returnTask) _arc_returnTask = nil end
-    _arc_last_zero_to_nonzero  = nil
-    _arc_was_zero_velocity     = false
 
     task.wait(2.5)
 
     if not AntiRagComboEnabled then return end
 
+    -- Watch PlatformStand to detect grabs.
+    -- When it goes true = we are being grabbed.
+    -- When it goes false = grab has ended.
+    _arc_platStandConn = hum:GetPropertyChangedSignal("PlatformStand"):Connect(function()
+        if not AntiRagComboEnabled or _arc_inReturnWindow then return end
+        if hum.PlatformStand then
+            -- Grab started — flag it and save position now while we're still normal
+            _arc_wasGrabbed = true
+            if not _arc_originalCFrame then
+                _arc_originalCFrame = hrp.CFrame
+            end
+        end
+        -- Note: we do NOT act on PlatformStand going false here.
+        -- We let the motor check below handle the ragdoll trigger,
+        -- and _arc_wasGrabbed tells it to use the grab path.
+    end)
+
+    -- Main heartbeat: watches for ragdoll via motor check
     _arc_connection = RunService.Heartbeat:Connect(function()
         if not AntiRagComboEnabled then return end
         if not char.Parent or not hrp.Parent then
@@ -661,59 +699,70 @@ local function _arc_onCharacterAdded(char)
             return
         end
 
-        local hrp_vel     = hrp.AssemblyLinearVelocity
-        local mag         = hrp_vel.Magnitude
-        local y_vel       = hrp_vel.Y
-        local is_zero_vel = (mag < 1e-6) and (math.abs(y_vel) < 1e-6)
-
-        -- FIX: velocity tracking always runs so zero->nonzero transitions are
-        -- never missed. _arc_ignoreVelocity only suppresses the timestamp update,
-        -- meaning a grab-tp won't falsely trigger the 3.5s delay, but real
-        -- ragdoll-throws still will.
-        if _arc_was_zero_velocity and not is_zero_vel then
-            if not _arc_ignoreVelocity then
-                _arc_last_zero_to_nonzero = tick()
-            end
-        end
-        _arc_was_zero_velocity = is_zero_vel
+        -- Block re-triggering during the cooldown window
+        if _arc_inReturnWindow then return end
 
         local total, disabled = _arc_countDisabledMotors(char)
         local isRagdolled     = total >= 12 and (disabled / total) >= 0.9
 
         if isRagdolled then
+            -- Save position if not already saved (may already be set from PlatformStand)
             if not _arc_originalCFrame then
                 _arc_originalCFrame = hrp.CFrame
-                local now = tick()
-                _arc_delay_time = 0.1
-                if _arc_last_zero_to_nonzero and (now - _arc_last_zero_to_nonzero) < 1 then
-                    _arc_delay_time = 3.5
+            end
+
+            if _arc_wasGrabbed then
+                -- POST-GRAB RAGDOLL PATH:
+                -- The grab already ended (PlatformStand is now false) and the
+                -- ragdoll is firing after. Clean the ragdoll in place and then
+                -- do the safe zone tp + 3.5s cooldown.
+                if not _arc_hasCleanedThisRagdoll then
+                    _arc_forceEndRagdoll(char)
+                    _arc_hasCleanedThisRagdoll = true
+                end
+                -- Only kick off the return sequence once
+                if not _arc_returnTask then
+                    _arc_inReturnWindow = true
+                    local savedCFrame = _arc_originalCFrame
+                    _arc_doReturn(hrp, savedCFrame)
+                end
+            else
+                -- NORMAL RAGDOLL PATH:
+                -- Not a grab — tp to safe zone immediately, short 0.1s return.
+                hrp.CFrame = _arc_safeCFrame
+
+                if not _arc_hasCleanedThisRagdoll then
+                    _arc_forceEndRagdoll(char)
+                    _arc_hasCleanedThisRagdoll = true
                 end
             end
-
-            hrp.CFrame = _arc_safeCFrame
-
-            if not _arc_hasCleanedThisRagdoll then
-                _arc_forceEndRagdoll(char)
-                _arc_hasCleanedThisRagdoll = true
-            end
         else
-            if _arc_originalCFrame and not _arc_returnTask then
-                _arc_returnTask = task.delay(_arc_delay_time, function()
-                    if hrp and hrp.Parent and _arc_originalCFrame then
-                        hrp.CFrame = _arc_originalCFrame
+            -- Ragdoll ended
+            if not _arc_wasGrabbed and _arc_originalCFrame and not _arc_returnTask then
+                -- Normal ragdoll ended — quick 0.1s return
+                _arc_inReturnWindow = true
+                local savedCFrame = _arc_originalCFrame
+                _arc_returnTask = task.delay(0.1, function()
+                    if hrp and hrp.Parent and savedCFrame then
+                        hrp.CFrame = savedCFrame
                         task.delay(0.05, function()
                             if hrp and hrp.Parent then
                                 hrp.AssemblyLinearVelocity = Vector3.new(0, -1, 0)
                             end
                         end)
                     end
-                    _arc_originalCFrame = nil
-                    _arc_delay_time     = nil
-                    _arc_returnTask     = nil
+                    _arc_originalCFrame        = nil
+                    _arc_returnTask            = nil
+                    _arc_hasCleanedThisRagdoll = false
+                    _arc_inReturnWindow        = false
+                    _arc_wasGrabbed            = false
                 end)
             end
-
-            _arc_hasCleanedThisRagdoll = false
+            -- If _arc_wasGrabbed is true here, the return is handled by _arc_doReturn
+            -- already queued from the ragdoll block above — don't touch it.
+            if not _arc_wasGrabbed then
+                _arc_hasCleanedThisRagdoll = false
+            end
         end
     end)
 end
@@ -730,15 +779,18 @@ local function stopAntiRagCombo()
         _arc_connection:Disconnect()
         _arc_connection = nil
     end
+    if _arc_platStandConn then
+        _arc_platStandConn:Disconnect()
+        _arc_platStandConn = nil
+    end
     if _arc_returnTask then
         task.cancel(_arc_returnTask)
         _arc_returnTask = nil
     end
     _arc_originalCFrame        = nil
-    _arc_delay_time            = nil
     _arc_hasCleanedThisRagdoll = false
-    _arc_last_zero_to_nonzero  = nil
-    _arc_was_zero_velocity     = false
+    _arc_inReturnWindow        = false
+    _arc_wasGrabbed            = false
 end
 
 LocalPlayer.CharacterAdded:Connect(function(char)
