@@ -528,7 +528,7 @@ local function stopSpamGrab()
     spamGrabThread = nil
 end
 
--- GRAB TARGET (cycles through TargetNamesList each call)
+-- GRAB TARGET
 local GrabRF = nil
 local grabTargetIndex = 1
 task.spawn(function()
@@ -538,21 +538,14 @@ task.spawn(function()
     end)
 end)
 
-local _arc_ignoreVelocity = false -- kept for compatibility, no longer used by ARC
-
 local function doGrabTarget()
     if #TargetNamesList == 0 then return end
-
-    -- cycle index
     if grabTargetIndex > #TargetNamesList then grabTargetIndex = 1 end
     local search = TargetNamesList[grabTargetIndex]
     grabTargetIndex = grabTargetIndex + 1
-
     local myChar = LocalPlayer.Character
     local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not myHRP then return end
-
-    -- find the target player
     local targetPlayer = nil
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer then
@@ -565,16 +558,11 @@ local function doGrabTarget()
     if not targetPlayer or not targetPlayer.Character then return end
     local targetHRP = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not targetHRP then return end
-
     local originalCFrame = myHRP.CFrame
-
-    -- tp directly to target
     myHRP.CFrame = targetHRP.CFrame
-
     task.wait()
     pcall(function() GrabRF:InvokeServer() end)
     task.wait(0.1)
-
     myHRP.CFrame = originalCFrame
 end
 
@@ -582,14 +570,80 @@ end
 local _arc_targetCFrame = CFrame.new(-502.844818, 10.1868954, -65.4427567, 0.560596228, 2.67291544e-09, -0.828089297, -2.95736768e-08, 1, -1.67928462e-08, 0.828089297, 3.39036497e-08, 0.560596228)
 local _arc_safeCFrame   = _arc_targetCFrame + Vector3.new(0, 1, 0)
 
--- State variables
+-- Delays in tenths of a second (integer slider values).
+-- ArcDefaultDelay: 0.1s-1.0s in 0.1 steps, default 0.1 (original script default)
+-- ArcGrabDelay:    1.0s-10.0s in 0.1 steps, default 3.5 (original script default)
+local ArcDefaultDelay = 0.1
+local ArcGrabDelay    = 3.5
+
 local _arc_connection              = nil
-local _arc_platStandConn           = nil  -- watches PlatformStand changes
+local _arc_platStandConn           = nil
 local _arc_originalCFrame          = nil
 local _arc_hasCleanedThisRagdoll   = false
 local _arc_returnTask              = nil
 local _arc_inReturnWindow          = false
-local _arc_wasGrabbed              = false  -- true when PlatformStand was seen as true
+local _arc_wasGrabbed              = false
+
+-- PLATFORM HELPER
+local _arc_platform = nil
+local _arc_platformStandConn = nil  -- heartbeat that keeps player on platform
+
+local function _arc_removePlatform()
+    -- Disconnect the stand-on-platform enforcer first
+    if _arc_platformStandConn then
+        _arc_platformStandConn:Disconnect()
+        _arc_platformStandConn = nil
+    end
+    if _arc_platform then
+        pcall(function() _arc_platform:Destroy() end)
+        _arc_platform = nil
+    end
+end
+
+local function _arc_spawnPlatform(position)
+    -- Clean up any existing platform first
+    _arc_removePlatform()
+
+    -- The platform sits just below the player's feet.
+    -- HumanoidRootPart is roughly 1 stud above the floor,
+    -- character legs add ~3 studs, so place top-face of platform at (Y - 3).
+    -- Part.Position is the centre, thickness is 1, so centre = Y - 3.5
+    local platformCFrame = CFrame.new(position.X, position.Y - 3.5, position.Z)
+
+    local part = Instance.new("Part")
+    part.Name = "ARC_SafePlatform"
+    part.Size = Vector3.new(12, 1, 12)   -- wide enough to stay on easily
+    part.CFrame = platformCFrame
+    part.Anchored = true
+    part.CanCollide = true
+    part.Locked = true
+    part.Material = Enum.Material.SmoothPlastic
+    part.BrickColor = BrickColor.new("Medium stone grey")
+    part.Transparency = 0.4
+    part.Parent = workspace
+    _arc_platform = part
+
+    -- Every heartbeat: if the player has drifted below the platform top, snap them back up.
+    -- This prevents falling through in case of physics jitter or network lag.
+    local platformTopY = platformCFrame.Position.Y + 0.5  -- top face Y
+    _arc_platformStandConn = RunService.Heartbeat:Connect(function()
+        if not _arc_platform or not _arc_platform.Parent then
+            _arc_removePlatform()
+            return
+        end
+        local char = LocalPlayer.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp and hrp.Parent then
+            -- If player falls below the platform surface, teleport them back on top
+            if hrp.Position.Y < platformTopY then
+                hrp.CFrame = CFrame.new(position.X, platformTopY + 3.5, position.Z)
+                hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end
+        end
+    end)
+
+    return part
+end
 
 local function _arc_countDisabledMotors(char)
     if not char then return 0, 0 end
@@ -632,13 +686,22 @@ local function _arc_forceEndRagdoll(char)
 end
 
 local function _arc_doReturn(hrp, savedCFrame)
-    -- Teleport to safe zone first
     if hrp and hrp.Parent then
-        hrp.CFrame = _arc_safeCFrame
+        local safePos = _arc_safeCFrame.Position
+
+        -- Spawn platform BEFORE teleporting so it is already there when we arrive
+        _arc_spawnPlatform(safePos)
+
+        -- Teleport player on top of the platform
+        hrp.CFrame = CFrame.new(safePos.X, safePos.Y, safePos.Z)
         hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
     end
-    -- Wait the cooldown, then return to original position
-    _arc_returnTask = task.delay(3.5, function()
+
+    -- Wait the cooldown (ArcGrabDelay seconds), then remove platform and return
+    _arc_returnTask = task.delay(ArcGrabDelay, function()
+        -- Remove platform first so physics resolves normally at the destination
+        _arc_removePlatform()
+
         if hrp and hrp.Parent and savedCFrame then
             hrp.CFrame = savedCFrame
             task.delay(0.05, function()
@@ -647,6 +710,7 @@ local function _arc_doReturn(hrp, savedCFrame)
                 end
             end)
         end
+
         _arc_originalCFrame        = nil
         _arc_returnTask            = nil
         _arc_hasCleanedThisRagdoll = false
@@ -661,7 +725,6 @@ local function _arc_onCharacterAdded(char)
     local hum = char:WaitForChild("Humanoid", 10)
     if not hum then return end
 
-    -- Clean up any previous connections/state
     if _arc_connection then _arc_connection:Disconnect() _arc_connection = nil end
     if _arc_platStandConn then _arc_platStandConn:Disconnect() _arc_platStandConn = nil end
     _arc_originalCFrame        = nil
@@ -674,24 +737,16 @@ local function _arc_onCharacterAdded(char)
 
     if not AntiRagComboEnabled then return end
 
-    -- Watch PlatformStand to detect grabs.
-    -- When it goes true = we are being grabbed.
-    -- When it goes false = grab has ended.
     _arc_platStandConn = hum:GetPropertyChangedSignal("PlatformStand"):Connect(function()
         if not AntiRagComboEnabled or _arc_inReturnWindow then return end
         if hum.PlatformStand then
-            -- Grab started — flag it and save position now while we're still normal
             _arc_wasGrabbed = true
             if not _arc_originalCFrame then
                 _arc_originalCFrame = hrp.CFrame
             end
         end
-        -- Note: we do NOT act on PlatformStand going false here.
-        -- We let the motor check below handle the ragdoll trigger,
-        -- and _arc_wasGrabbed tells it to use the grab path.
     end)
 
-    -- Main heartbeat: watches for ragdoll via motor check
     _arc_connection = RunService.Heartbeat:Connect(function()
         if not AntiRagComboEnabled then return end
         if not char.Parent or not hrp.Parent then
@@ -699,36 +754,27 @@ local function _arc_onCharacterAdded(char)
             return
         end
 
-        -- Block re-triggering during the cooldown window
         if _arc_inReturnWindow then return end
 
         local total, disabled = _arc_countDisabledMotors(char)
         local isRagdolled     = total >= 12 and (disabled / total) >= 0.9
 
         if isRagdolled then
-            -- Save position if not already saved (may already be set from PlatformStand)
             if not _arc_originalCFrame then
                 _arc_originalCFrame = hrp.CFrame
             end
 
             if _arc_wasGrabbed then
-                -- POST-GRAB RAGDOLL PATH:
-                -- The grab already ended (PlatformStand is now false) and the
-                -- ragdoll is firing after. Clean the ragdoll in place and then
-                -- do the safe zone tp + 3.5s cooldown.
                 if not _arc_hasCleanedThisRagdoll then
                     _arc_forceEndRagdoll(char)
                     _arc_hasCleanedThisRagdoll = true
                 end
-                -- Only kick off the return sequence once
                 if not _arc_returnTask then
                     _arc_inReturnWindow = true
                     local savedCFrame = _arc_originalCFrame
                     _arc_doReturn(hrp, savedCFrame)
                 end
             else
-                -- NORMAL RAGDOLL PATH:
-                -- Not a grab — tp to safe zone immediately, short 0.1s return.
                 hrp.CFrame = _arc_safeCFrame
 
                 if not _arc_hasCleanedThisRagdoll then
@@ -737,12 +783,10 @@ local function _arc_onCharacterAdded(char)
                 end
             end
         else
-            -- Ragdoll ended
             if not _arc_wasGrabbed and _arc_originalCFrame and not _arc_returnTask then
-                -- Normal ragdoll ended — quick 0.1s return
                 _arc_inReturnWindow = true
                 local savedCFrame = _arc_originalCFrame
-                _arc_returnTask = task.delay(0.1, function()
+                _arc_returnTask = task.delay(ArcDefaultDelay, function()
                     if hrp and hrp.Parent and savedCFrame then
                         hrp.CFrame = savedCFrame
                         task.delay(0.05, function()
@@ -758,8 +802,6 @@ local function _arc_onCharacterAdded(char)
                     _arc_wasGrabbed            = false
                 end)
             end
-            -- If _arc_wasGrabbed is true here, the return is handled by _arc_doReturn
-            -- already queued from the ragdoll block above — don't touch it.
             if not _arc_wasGrabbed then
                 _arc_hasCleanedThisRagdoll = false
             end
@@ -787,6 +829,7 @@ local function stopAntiRagCombo()
         task.cancel(_arc_returnTask)
         _arc_returnTask = nil
     end
+    _arc_removePlatform()
     _arc_originalCFrame        = nil
     _arc_hasCleanedThisRagdoll = false
     _arc_inReturnWindow        = false
@@ -833,6 +876,8 @@ local function getConfig()
             TeleportAuraHeightMin = TeleportAuraHeightMin,
             TeleportAuraHeightMax = TeleportAuraHeightMax,
             TeleportAuraDelay = TeleportAuraDelay,
+            ArcDefaultDelay = ArcDefaultDelay,
+            ArcGrabDelay = ArcGrabDelay,
         },
         friends = table.concat(FriendsNamesList, " "),
         targets = table.concat(TargetNamesList, " "),
@@ -871,7 +916,6 @@ end
 
 loadFile()
 
--- After GUI is fully built, call this to sync keybind button displays
 local function refreshKeybindDisplays()
     for k, keyCode in pairs(Keybinds) do
         if keyCode and ToggleCallbacks[k] and ToggleCallbacks[k].setKeybind then
@@ -880,7 +924,6 @@ local function refreshKeybindDisplays()
     end
 end
 
--- These will be set after GUI is built so toggles can be applied
 local ToggleSetters = {}
 local SliderSetters = {}
 local friendsTextRef = nil
@@ -889,20 +932,17 @@ local strafeTargetBoxRef = nil
 
 local function applyConfig(cfg)
     if not cfg then return end
-    -- apply sliders
     if cfg.sliders then
         for k, v in pairs(cfg.sliders) do
             if SliderSetters[k] then SliderSetters[k](v) end
         end
     end
-    -- apply friends/targets text
     if cfg.friends and friendsTextRef then friendsTextRef.Text = cfg.friends end
     if cfg.targets and targetTextRef then targetTextRef.Text = cfg.targets end
     if cfg.strafeTarget and strafeTargetBoxRef then
         strafeTargetBoxRef.Text = cfg.strafeTarget
         TargetStrafeTargetName = cfg.strafeTarget
     end
-    -- apply keybinds
     if cfg.keybinds then
         for k, vName in pairs(cfg.keybinds) do
             if vName and type(vName) == "string" then
@@ -915,13 +955,11 @@ local function applyConfig(cfg)
             end
         end
     end
-    -- apply toggles last so they use correct slider values
     if cfg.toggles then
         for k, v in pairs(cfg.toggles) do
             if ToggleSetters[k] then ToggleSetters[k](v) end
         end
     end
-    -- refresh all keybind button displays now that ToggleCallbacks is populated
     refreshKeybindDisplays()
 end
 
@@ -1098,11 +1136,9 @@ local function createToggle(text, parent, callback, order, keybindKey)
                 bindBtn.Text = keyCode and keyCode.Name or "None"
             end
         }
-        -- expose setter for config load
         ToggleSetters[keybindKey .. "Enabled"] = function(state)
             if state ~= enabled then setEnabled(state) end
         end
-        -- also expose by raw name for toggles without keybind suffix match
         ToggleSetters[text:gsub(" ", "") .. "Enabled"] = function(state)
             if state ~= enabled then setEnabled(state) end
         end
@@ -1239,6 +1275,140 @@ local function createSlider(text, min, max, default, parent, callback, order)
     end)
 
     return sliderFrame, setValue
+end
+
+-- Decimal slider: min/max/default are real numbers with 1 decimal place (e.g. 0.1, 3.5).
+-- Internally operates in tenths so dragging snaps to 0.1 increments.
+-- Displays the real value (e.g. "0.3", "3.5") in the value label.
+local function createDecimalSlider(text, minVal, maxVal, defaultVal, parent, callback, order)
+    local SCALE = 10
+    local minI    = math.round(minVal    * SCALE)
+    local maxI    = math.round(maxVal    * SCALE)
+    local defaultI = math.round(defaultVal * SCALE)
+
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Size = UDim2.new(1, 0, 0, 44)
+    sliderFrame.BackgroundTransparency = 1
+    sliderFrame.LayoutOrder = order
+    sliderFrame.ZIndex = 3
+    sliderFrame.Parent = parent
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -45, 0, 20)
+    label.Position = UDim2.new(0, 4, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.Font = Enum.Font.GothamSemibold
+    label.TextSize = 13
+    label.Text = text
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 4
+    label.Parent = sliderFrame
+
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Size = UDim2.new(0, 40, 0, 20)
+    valueLabel.Position = UDim2.new(1, -44, 0, 0)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = 13
+    valueLabel.Text = tostring(defaultVal)
+    valueLabel.ZIndex = 4
+    valueLabel.Parent = sliderFrame
+
+    local sliderHitArea = Instance.new("TextButton")
+    sliderHitArea.Size = UDim2.new(1, -10, 0, 30)
+    sliderHitArea.Position = UDim2.new(0, 5, 0, 14)
+    sliderHitArea.BackgroundTransparency = 1
+    sliderHitArea.Text = ""
+    sliderHitArea.ZIndex = 3
+    sliderHitArea.Parent = sliderFrame
+
+    local sliderBg = Instance.new("Frame")
+    sliderBg.Size = UDim2.new(1, 0, 0, 6)
+    sliderBg.Position = UDim2.new(0, 0, 0.5, -3)
+    sliderBg.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    sliderBg.ZIndex = 3
+    sliderBg.Parent = sliderHitArea
+    Instance.new("UICorner", sliderBg).CornerRadius = UDim.new(0, 3)
+
+    local initPos = (defaultI - minI) / (maxI - minI)
+    local sliderFill = Instance.new("Frame")
+    sliderFill.Size = UDim2.new(initPos, 0, 1, 0)
+    sliderFill.BackgroundColor3 = Color3.fromRGB(100, 180, 255)
+    sliderFill.ZIndex = 4
+    sliderFill.Parent = sliderBg
+    Instance.new("UICorner", sliderFill).CornerRadius = UDim.new(0, 3)
+
+    local sliderBtn = Instance.new("TextButton")
+    sliderBtn.Size = UDim2.new(0, 28, 0, 28)
+    sliderBtn.Position = UDim2.new(initPos, -14, 0.5, -14)
+    sliderBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    sliderBtn.Text = ""
+    sliderBtn.ZIndex = 5
+    sliderBtn.Parent = sliderBg
+    Instance.new("UICorner", sliderBtn).CornerRadius = UDim.new(1, 0)
+
+    local function formatVal(intVal)
+        local real = intVal / SCALE
+        -- show one decimal place always (e.g. 1 → "1.0", 3 → "0.3")
+        return string.format("%.1f", real)
+    end
+
+    local function setValue(intVal)
+        intVal = math.clamp(math.floor(intVal + 0.5), minI, maxI)
+        local pos = (intVal - minI) / (maxI - minI)
+        sliderFill.Size = UDim2.new(pos, 0, 1, 0)
+        sliderBtn.Position = UDim2.new(pos, -14, 0.5, -14)
+        valueLabel.Text = formatVal(intVal)
+        callback(intVal / SCALE)   -- pass real value to callback
+    end
+
+    local function handleSliderInput(inputPos)
+        local pos = math.clamp(
+            (inputPos.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X,
+            0, 1
+        )
+        setValue(minI + (maxI - minI) * pos)
+    end
+
+    local slider_dragging = false
+
+    sliderBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            slider_dragging = true
+        end
+    end)
+    sliderHitArea.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            slider_dragging = true
+            handleSliderInput(input.Position)
+        end
+    end)
+    sliderBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            slider_dragging = true
+            handleSliderInput(input.Position)
+        end
+    end)
+
+    safeConnect(UserInputService.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            slider_dragging = false
+        end
+    end)
+    safeConnect(UserInputService.InputChanged, function(input)
+        if slider_dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            handleSliderInput(input.Position)
+        end
+    end)
+
+    -- Setter accepts a real value (e.g. 0.3) and snaps to nearest tenth
+    local function setValueReal(realVal)
+        setValue(math.round(realVal * SCALE))
+    end
+
+    return sliderFrame, setValueReal
 end
 
 -- SECTIONS
@@ -1561,13 +1731,16 @@ createToggle("Silent AutoBlock Enabled", SilentAutoBlockSection, function(state)
 end, 1, "SilentAutoBlock")
 
 local AntiRagComboSection = createSection("Anti Rag Combo", 10)
-AntiRagComboSection.Size = UDim2.new(0.94, 0, 0, 60)
+AntiRagComboSection.Size = UDim2.new(0.94, 0, 0, 155)
 createToggle("Anti Rag Combo Enabled", AntiRagComboSection, function(state)
     AntiRagComboEnabled = state
     if state then startAntiRagCombo() else stopAntiRagCombo() end
 end, 1, "AntiRagCombo")
+local _, setArcDefaultDelay = createDecimalSlider("Default Delay (s)", 0.1, 1.0, 0.1, AntiRagComboSection, function(v) ArcDefaultDelay = v end, 2)
+local _, setArcGrabDelay    = createDecimalSlider("Grab Delay (s)",    1.0, 10.0, 3.5, AntiRagComboSection, function(v) ArcGrabDelay = v end, 3)
+SliderSetters["ArcDefaultDelay"] = setArcDefaultDelay
+SliderSetters["ArcGrabDelay"]    = setArcGrabDelay
 
--- SPAM GRAB SECTION
 local SpamGrabSection = createSection("Spam Grab", 11)
 SpamGrabSection.Size = UDim2.new(0.94, 0, 0, 60)
 createToggle("Spam Grab Enabled", SpamGrabSection, function(state)
@@ -1827,6 +2000,7 @@ game:BindToClose(function()
     stopAntiRagCombo()
     stopSpamGrab()
     if _arc_returnTask then task.cancel(_arc_returnTask) end
+    _arc_removePlatform()
     for _, tag in pairs(FriendNametags) do pcall(function() tag:Destroy() end) end
     for _, tag in pairs(TargetNametags) do pcall(function() tag:Destroy() end) end
 end)
