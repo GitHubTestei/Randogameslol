@@ -331,21 +331,6 @@ local function handleClickAdd(screenPos)
     refreshAllHighlights()
 end
 
--- PC: left mouse button click
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 and clickMode then
-        handleClickAdd(UserInputService:GetMouseLocation())
-    end
-end)
-
--- Mobile: touch tap
-UserInputService.TouchTap:Connect(function(positions)
-    if not clickMode then return end
-    if #positions > 0 then
-        handleClickAdd(positions[1])
-    end
-end)
 
 -- Floating toggle button in its own ScreenGui so it's always on top
 if playerGui:FindFirstChild("ExploitGuiToggle") then
@@ -355,30 +340,24 @@ end
 local toggleGuiOverlay = Instance.new("ScreenGui")
 toggleGuiOverlay.Name = "ExploitGuiToggle"
 toggleGuiOverlay.ResetOnSpawn = false
-toggleGuiOverlay.DisplayOrder = 9999 -- above everything
+toggleGuiOverlay.DisplayOrder = 9999
 toggleGuiOverlay.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 toggleGuiOverlay.Parent = playerGui
 
 local floatBtn = Instance.new("TextButton")
-floatBtn.Size = UDim2.new(0, 70, 0, 28)
+floatBtn.Size = UDim2.new(0, 70, 0, 44)
 floatBtn.Position = UDim2.new(1, -80, 0, 10)
 floatBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
 floatBtn.BorderSizePixel = 0
 floatBtn.Text = "HIDE"
 floatBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-floatBtn.TextSize = 11
+floatBtn.TextSize = 14
 floatBtn.Font = Enum.Font.GothamBold
 floatBtn.Parent = toggleGuiOverlay
 Instance.new("UICorner", floatBtn).CornerRadius = UDim.new(0, 4)
 local floatStroke = Instance.new("UIStroke", floatBtn)
 floatStroke.Color = Color3.fromRGB(180, 180, 180)
 floatStroke.Thickness = 1
-
-floatBtn.MouseButton1Click:Connect(function()
-    guiVisible = not guiVisible
-    mainFrame.Visible = guiVisible
-    floatBtn.Text = guiVisible and "HIDE" or "SHOW"
-end)
 
 -- =====================
 --   GUI SETUP
@@ -394,12 +373,11 @@ screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = playerGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 300, 0, 560)
-mainFrame.Position = UDim2.new(0, 20, 0.5, -280)
+mainFrame.Size = UDim2.new(0, 170, 0, 290)
+mainFrame.Position = UDim2.new(0, 10, 0.5, -160)
 mainFrame.BackgroundColor3 = Color3.fromRGB(8, 12, 18)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
-mainFrame.Draggable = true
 mainFrame.Parent = screenGui
 
 local border = Instance.new("UIStroke")
@@ -409,13 +387,66 @@ border.Parent = mainFrame
 
 Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 6)
 
--- Title bar
+-- toggleGui now defined after mainFrame exists
+local function toggleGui()
+    guiVisible = not guiVisible
+    mainFrame.Visible = guiVisible
+    floatBtn.Text = guiVisible and "HIDE" or "SHOW"
+end
+
+-- Use InputEnded for instant response on mobile tap (not TouchTap which has delay)
+floatBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch
+    or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        toggleGui()
+    end
+end)
+
+-- =====================
+--   DRAG
+-- =====================
+local dragging = false
+local dragStartPos = nil
+local frameStartPos = nil
+
+-- Title bar catches the drag start, UIS tracks movement globally
+-- so the scrollframe can't steal it
 local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1, 0, 0, 36)
+titleBar.Size = UDim2.new(1, 0, 0, 40)
 titleBar.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
 titleBar.BorderSizePixel = 0
+titleBar.Active = true
 titleBar.Parent = mainFrame
 Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 6)
+
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch
+    or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStartPos = Vector2.new(input.Position.X, input.Position.Y)
+        frameStartPos = mainFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if not dragging then return end
+    if input.UserInputType == Enum.UserInputType.Touch
+    or input.UserInputType == Enum.UserInputType.MouseMovement then
+        local pos = Vector2.new(input.Position.X, input.Position.Y)
+        local delta = pos - dragStartPos
+        mainFrame.Position = UDim2.new(
+            frameStartPos.X.Scale, frameStartPos.X.Offset + delta.X,
+            frameStartPos.Y.Scale, frameStartPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch
+    or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
 
 local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -10, 1, 0)
@@ -423,7 +454,7 @@ titleLabel.Position = UDim2.new(0, 10, 0, 0)
 titleLabel.BackgroundTransparency = 1
 titleLabel.Text = "AURA GUI"
 titleLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
-titleLabel.TextSize = 14
+titleLabel.TextSize = 12
 titleLabel.Font = Enum.Font.GothamBold
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = titleBar
@@ -431,17 +462,17 @@ titleLabel.Parent = titleBar
 local subtitleLabel = Instance.new("TextLabel")
 subtitleLabel.Size = UDim2.new(1, -10, 1, 0)
 subtitleLabel.BackgroundTransparency = 1
-subtitleLabel.Text = "LEFT CTRL = HIDE"
+subtitleLabel.Text = "DRAG TO MOVE"
 subtitleLabel.TextColor3 = Color3.fromRGB(100, 100, 120)
-subtitleLabel.TextSize = 9
+subtitleLabel.TextSize = 7
 subtitleLabel.Font = Enum.Font.Gotham
 subtitleLabel.TextXAlignment = Enum.TextXAlignment.Right
 subtitleLabel.Parent = titleBar
 
 -- Scroll
 local scrollFrame = Instance.new("ScrollingFrame")
-scrollFrame.Size = UDim2.new(1, 0, 1, -36)
-scrollFrame.Position = UDim2.new(0, 0, 0, 36)
+scrollFrame.Size = UDim2.new(1, 0, 1, -40)
+scrollFrame.Position = UDim2.new(0, 0, 0, 40)
 scrollFrame.BackgroundTransparency = 1
 scrollFrame.BorderSizePixel = 0
 scrollFrame.ScrollBarThickness = 3
@@ -807,6 +838,26 @@ createClickToAddRow("friend", "clickAddFriend", Color3.fromRGB(60, 220, 90))
 refreshAllHighlights()
 
 -- =====================
+--   CLICK TO ADD HANDLERS
+-- =====================
+
+-- PC: left mouse button
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 and clickMode then
+        handleClickAdd(UserInputService:GetMouseLocation())
+    end
+end)
+
+-- Mobile: TouchTap fires only on clean taps, not scrolls
+UserInputService.TouchTap:Connect(function(positions)
+    if not clickMode then return end
+    if #positions > 0 then
+        handleClickAdd(positions[1])
+    end
+end)
+
+-- =====================
 --   INPUT HANDLER
 -- =====================
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -833,9 +884,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 
     -- Hide/show GUI
     if input.KeyCode == Enum.KeyCode.LeftControl then
-        guiVisible = not guiVisible
-        mainFrame.Visible = guiVisible
-        floatBtn.Text = guiVisible and "HIDE" or "SHOW"
+        toggleGui()
         return
     end
 
@@ -884,9 +933,26 @@ end
 -- =====================
 --   DEATH TP
 -- =====================
-local function setupDeathTP()
+localPlayer.CharacterAdded:Connect(function(character)
+    -- Setup: save position on death
+    local humanoid = character:WaitForChild("Humanoid")
+    local rootPart = character:WaitForChild("HumanoidRootPart")
+
+    humanoid.Died:Connect(function()
+        if state.deathTP then
+            deathPosition = rootPart.Position
+        end
+    end)
+
+    -- TP: if we have a saved position, teleport immediately on spawn
+    if state.deathTP and deathPosition then
+        rootPart.CFrame = CFrame.new(deathPosition)
+    end
+end)
+
+-- Also set up on the current character if already spawned
+if localPlayer.Character then
     local character = localPlayer.Character
-    if not character then return end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     if humanoid and rootPart then
@@ -897,20 +963,6 @@ local function setupDeathTP()
         end)
     end
 end
-
-localPlayer.CharacterAdded:Connect(function(character)
-    setupDeathTP()
-    if state.deathTP and deathPosition then
-        local rootPart = character:WaitForChild("HumanoidRootPart")
-        local target = CFrame.new(deathPosition)
-        -- Force it for 10 frames so Roblox can't override it
-        for _ = 1, 10 do
-            rootPart.CFrame = target
-            RunService.Heartbeat:Wait()
-        end
-    end
-end)
-setupDeathTP()
 
 -- =====================
 --   MAIN LOOP
@@ -924,12 +976,16 @@ RunService.Heartbeat:Connect(function()
     if state.killAura then
         for _, player in ipairs(Players:GetPlayers()) do
             if player ~= localPlayer and player.Character then
-                if isInFightZone(player.Character) and shouldAttack(player) then
-                    ReplicatedStorage.FightHandler.PunchEvent:FireServer(unpack({
-                        [1] = { ["Frame"] = rootPart.CFrame, ["Params"] = nil, ["Size"] = Vector3.new(7,7,7) },
-                        [2] = { [1] = player.Character },
-                        [3] = true
-                    }))
+                local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid and humanoid.Health > 0
+                and isInFightZone(player.Character) and shouldAttack(player) then
+                    for _ = 1, 20 do
+                        ReplicatedStorage.FightHandler.PunchEvent:FireServer(unpack({
+                            [1] = { ["Frame"] = rootPart.CFrame, ["Params"] = nil, ["Size"] = Vector3.new(7,7,7) },
+                            [2] = { [1] = player.Character },
+                            [3] = true
+                        }))
+                    end
                 end
             end
         end
