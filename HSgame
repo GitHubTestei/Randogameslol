@@ -347,6 +347,39 @@ UserInputService.TouchTap:Connect(function(positions)
     end
 end)
 
+-- Floating toggle button in its own ScreenGui so it's always on top
+if playerGui:FindFirstChild("ExploitGuiToggle") then
+    playerGui.ExploitGuiToggle:Destroy()
+end
+
+local toggleGuiOverlay = Instance.new("ScreenGui")
+toggleGuiOverlay.Name = "ExploitGuiToggle"
+toggleGuiOverlay.ResetOnSpawn = false
+toggleGuiOverlay.DisplayOrder = 9999 -- above everything
+toggleGuiOverlay.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+toggleGuiOverlay.Parent = playerGui
+
+local floatBtn = Instance.new("TextButton")
+floatBtn.Size = UDim2.new(0, 70, 0, 28)
+floatBtn.Position = UDim2.new(1, -80, 0, 10)
+floatBtn.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+floatBtn.BorderSizePixel = 0
+floatBtn.Text = "HIDE"
+floatBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+floatBtn.TextSize = 11
+floatBtn.Font = Enum.Font.GothamBold
+floatBtn.Parent = toggleGuiOverlay
+Instance.new("UICorner", floatBtn).CornerRadius = UDim.new(0, 4)
+local floatStroke = Instance.new("UIStroke", floatBtn)
+floatStroke.Color = Color3.fromRGB(180, 180, 180)
+floatStroke.Thickness = 1
+
+floatBtn.MouseButton1Click:Connect(function()
+    guiVisible = not guiVisible
+    mainFrame.Visible = guiVisible
+    floatBtn.Text = guiVisible and "HIDE" or "SHOW"
+end)
+
 -- =====================
 --   GUI SETUP
 -- =====================
@@ -399,7 +432,7 @@ local subtitleLabel = Instance.new("TextLabel")
 subtitleLabel.Size = UDim2.new(1, -10, 1, 0)
 subtitleLabel.BackgroundTransparency = 1
 subtitleLabel.Text = "LEFT CTRL = HIDE"
-subtitleLabel.TextColor3 = Color3.fromRGB(60, 100, 130)
+subtitleLabel.TextColor3 = Color3.fromRGB(100, 100, 120)
 subtitleLabel.TextSize = 9
 subtitleLabel.Font = Enum.Font.Gotham
 subtitleLabel.TextXAlignment = Enum.TextXAlignment.Right
@@ -802,6 +835,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if input.KeyCode == Enum.KeyCode.LeftControl then
         guiVisible = not guiVisible
         mainFrame.Visible = guiVisible
+        floatBtn.Text = guiVisible and "HIDE" or "SHOW"
         return
     end
 
@@ -857,16 +891,23 @@ local function setupDeathTP()
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     if humanoid and rootPart then
         humanoid.Died:Connect(function()
-            if state.deathTP then deathPosition = rootPart.Position end
+            if state.deathTP then
+                deathPosition = rootPart.Position
+            end
         end)
     end
 end
 
 localPlayer.CharacterAdded:Connect(function(character)
-    task.wait(1)
     setupDeathTP()
     if state.deathTP and deathPosition then
-        character:WaitForChild("HumanoidRootPart").CFrame = CFrame.new(deathPosition)
+        local rootPart = character:WaitForChild("HumanoidRootPart")
+        local target = CFrame.new(deathPosition)
+        -- Force it for 10 frames so Roblox can't override it
+        for _ = 1, 10 do
+            rootPart.CFrame = target
+            RunService.Heartbeat:Wait()
+        end
     end
 end)
 setupDeathTP()
