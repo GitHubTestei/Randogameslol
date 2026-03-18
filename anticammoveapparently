@@ -1,0 +1,11 @@
+local RunService = game:GetService("RunService")
+local camera = workspace.CurrentCamera
+local player = game.Players.LocalPlayer
+
+RunService:BindToRenderStep("AntiSpin", Enum.RenderPriority.Camera.Value + 1, function()
+    if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        if camera.CameraType ~= Enum.CameraType.Custom then
+            camera.CameraType = Enum.CameraType.Custom
+        end
+    end
+end)
