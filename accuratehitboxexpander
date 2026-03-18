@@ -1,0 +1,23 @@
+_G.HeadSize = 16.8
+_G.Disabled = true
+
+local rainbowHue = 0
+
+game:GetService('RunService').RenderStepped:connect(function()
+	rainbowHue = (rainbowHue + 0.005) % 1
+
+	if _G.Disabled then
+		for i,v in next, game:GetService('Players'):GetPlayers() do
+			if v.Name ~= game:GetService('Players').LocalPlayer.Name then
+				pcall(function()
+					v.Character.HumanoidRootPart.Size = Vector3.new(_G.HeadSize,_G.HeadSize,_G.HeadSize)
+					v.Character.HumanoidRootPart.Transparency = 0.95
+					v.Character.HumanoidRootPart.Color = Color3.fromHSV(rainbowHue, 1, 1)
+					v.Character.HumanoidRootPart.Material = "Neon"
+					v.Character.HumanoidRootPart.CanCollide = false
+					v.Character.HumanoidRootPart.Shape = Enum.PartType.Ball
+				end)
+			end
+		end
+	end
+end)
