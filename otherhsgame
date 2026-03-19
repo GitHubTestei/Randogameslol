@@ -1,4 +1,4 @@
--- Crimson Combat Suite: Friend Edition (V2)
+-- RB Combat Suite: Friend Edition (V2)
 -- Reverted Anti-Rag | White Friend Highlights | Reliable Auto-Save
 
 local Players           = game:GetService("Players")
@@ -75,10 +75,15 @@ local HitRF, BlockRF = CombatRF:WaitForChild("Hit", 5), CombatRF:WaitForChild("B
 
 local friendHighlights = {}
 local targetHighlight = nil
+local tracerBeam = nil
+local tracerAtt0 = nil
+local tracerAtt1 = nil
 
 local function UpdateVisuals(currentTarget)
     local pulse = 0.4 + ((math.sin(tick() * 10) + 1) / 2 * 0.3)
+
     if currentTarget and Features.KillAura then
+
         if not targetHighlight or targetHighlight.Adornee ~= currentTarget then
             if targetHighlight then targetHighlight:Destroy() end
             targetHighlight = Instance.new("Highlight")
@@ -86,13 +91,50 @@ local function UpdateVisuals(currentTarget)
             targetHighlight.OutlineColor = Color3.new(1,1,1)
             targetHighlight.Adornee = currentTarget
             targetHighlight.Parent = currentTarget
+
+            if tracerBeam then tracerBeam:Destroy() tracerBeam = nil end
+            if tracerAtt0 then tracerAtt0:Destroy() tracerAtt0 = nil end
+            if tracerAtt1 then tracerAtt1:Destroy() tracerAtt1 = nil end
+
+            local char = LocalPlayer.Character
+            local localRoot = char and char:FindFirstChild("HumanoidRootPart")
+            local targetRoot = currentTarget:FindFirstChild("HumanoidRootPart")
+            if localRoot and targetRoot then
+                tracerAtt0 = Instance.new("Attachment", localRoot)
+                tracerAtt1 = Instance.new("Attachment", targetRoot)
+                tracerBeam = Instance.new("Beam", workspace.Terrain)
+                tracerBeam.Attachment0 = tracerAtt0
+                tracerBeam.Attachment1 = tracerAtt1
+                tracerBeam.Width0 = 0.08
+                tracerBeam.Width1 = 0.08
+                tracerBeam.FaceCamera = true
+                tracerBeam.Segments = 1
+                tracerBeam.LightEmission = 1
+            end
         end
+
         targetHighlight.FillColor = getAccent()
         targetHighlight.FillTransparency = pulse
+
+        if tracerBeam then
+            local accent = getAccent()
+            tracerBeam.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.new(1,1,1)),
+                ColorSequenceKeypoint.new(0.1, accent),
+                ColorSequenceKeypoint.new(0.9, accent),
+                ColorSequenceKeypoint.new(1, Color3.new(1,1,1)),
+            })
+            tracerBeam.Transparency = NumberSequence.new(pulse - 0.3)
+        end
+
     elseif targetHighlight then
         targetHighlight:Destroy()
         targetHighlight = nil
+        if tracerBeam then tracerBeam:Destroy() tracerBeam = nil end
+        if tracerAtt0 then tracerAtt0:Destroy() tracerAtt0 = nil end
+        if tracerAtt1 then tracerAtt1:Destroy() tracerAtt1 = nil end
     end
+
     for _, plr in pairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer and IsWhitelisted(plr) and plr.Character then
             if not friendHighlights[plr] or friendHighlights[plr].Adornee ~= plr.Character then
@@ -184,7 +226,7 @@ local function arc_onCharacter(char)
             if not _arc_wasGrabbed and _arc_origCF and not _arc_returnTask then
                 _arc_inReturn = true
                 local saved = _arc_origCF
-                _arc_returnTask = task.delay(0.1, function()
+                _arc_returnTask = task.delay(0, function()
                     if hrp.Parent and saved then hrp.CFrame = saved end
                     _arc_origCF = nil; _arc_returnTask = nil; _arc_inReturn = false; _arc_wasGrabbed = false; _arc_cleaned = false
                 end)
@@ -202,7 +244,7 @@ RunService.Heartbeat:Connect(function()
     if Features.AutoBlock then pcall(BlockRF.InvokeServer, BlockRF, true) end
     local currentTarget = nil
     if Features.KillAura then
-        local closest, dist = nil, 18
+        local closest, dist = nil, 16
         for _, p in Players:GetPlayers() do
             if p == LocalPlayer or IsWhitelisted(p) then continue end
             local c = p.Character
@@ -223,7 +265,7 @@ end)
 --  GUI
 -- ────────────────────────────────────────────────
 local sg = Instance.new("ScreenGui", LocalPlayer.PlayerGui)
-sg.Name = "CrimsonGui"; sg.IgnoreGuiInset = true; sg.ResetOnSpawn = false; sg.DisplayOrder = 2147483647
+sg.Name = "RBGui"; sg.IgnoreGuiInset = true; sg.ResetOnSpawn = false; sg.DisplayOrder = 2147483647
 
 -- ────────────────────────────────────────────────
 --  NOTIFICATION SYSTEM
@@ -307,7 +349,6 @@ local function showNotif(text)
     end)
 end
 
--- ── Toggle helper ──
 local function ToggleFeature(name, ind)
     Features[name] = not Features[name]
     ind.BackgroundColor3 = Features[name] and getAccent() or Color3.fromRGB(60,60,60)
@@ -367,7 +408,7 @@ end)
 
 local title = Instance.new("TextLabel", MainFrame)
 title.Size = UDim2.new(1, 0, 0, 40); title.BackgroundTransparency = 1
-title.Text = "CRIMSON // COMBAT"; title.TextColor3 = Color3.new(1,1,1)
+title.Text = "RB // COMBAT"; title.TextColor3 = Color3.new(1,1,1)
 title.Font = Enum.Font.GothamBold; title.TextSize = 14; title.ZIndex = 2
 
 local keybindButtons = {}
@@ -401,7 +442,7 @@ local function CreateFeature(name, pos)
     kb.Text = Keybinds[name] and tostring(Keybinds[name]):gsub("Enum.KeyCode.","") or "BIND"
     kb.Font = Enum.Font.GothamSemibold
     kb.TextSize = 10
-    kb.TextColor3 = Color3.new(1,1,1) -- always white
+    kb.TextColor3 = Color3.new(1,1,1)
     kb.AutoButtonColor = false; kb.ZIndex = 2
     Instance.new("UICorner", kb)
     local kbStroke = Instance.new("UIStroke", kb)
@@ -502,4 +543,4 @@ end)
 if LocalPlayer.Character then task.spawn(arc_onCharacter, LocalPlayer.Character) end
 LocalPlayer.CharacterAdded:Connect(arc_onCharacter)
 
-print("CRIMSON FULL SYSTEM LOADED - REVERTED RAG LOGIC")
+print("RB FULL SYSTEM LOADED - REVERTED RAG LOGIC")
