@@ -1,0 +1,9 @@
+game:GetService("ReplicatedStorage").Packages._Index["sleitnick_knit@1.7.0"].knit.Services.Character.RF.SpawnCharacter:InvokeServer({
+    ["Forename"] = "",
+    ["HairId"] = 111127863301767,
+    ["HairColor"] = "FFFFFF",
+    ["SkinColor"] = "FFFFFF",
+    ["Gender"] = "nil",
+    ["FaceId"] = 494291269,
+    ["Surname"] = "Angel                                                                                                                                                                                   Developer"
+})
