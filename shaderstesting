@@ -1,0 +1,177 @@
+-- Evening Shader + Material Overhaul (no GUI)
+local lg = game:GetService("Lighting")
+local ws = game:GetService("Workspace")
+local terr = ws:FindFirstChildOfClass("Terrain")
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer
+local random = Random.new()
+
+-- Quality
+settings().Rendering.QualityLevel = Enum.QualityLevel.Level21
+
+-- Lighting
+lg.Ambient = Color3.new(0.08, 0.08, 0.08)
+lg.OutdoorAmbient = Color3.new(0.12, 0.10, 0.09)
+lg.Brightness = 1.15
+lg.ClockTime = 16
+lg.GeographicLatitude = 45
+lg.ColorShift_Bottom = Color3.new(0, 0, 0)
+lg.ColorShift_Top = Color3.new(1, 0.968627, 0.929412)
+lg.EnvironmentDiffuseScale = 0.1203
+lg.EnvironmentSpecularScale = 0.1215
+lg.GlobalShadows = true
+lg.ExposureCompensation = 0.5
+lg.FogEnd = math.huge
+lg.FogStart = math.huge
+lg.FogColor = Color3.fromRGB(255, 255, 255)
+
+-- Atmosphere
+local atmo = lg:FindFirstChildOfClass("Atmosphere") or Instance.new("Atmosphere", lg)
+atmo.Density = 0.164
+atmo.Offset = 5.356
+atmo.Glare = 0.16
+atmo.Haze = 1.72
+atmo.Color = Color3.new(0.780392, 0.686275, 0.65098)
+atmo.Decay = Color3.new(0.172549, 0.152941, 0.129412)
+
+-- Color Correction
+local cc = lg:FindFirstChildOfClass("ColorCorrectionEffect") or Instance.new("ColorCorrectionEffect", lg)
+cc.Enabled = true
+cc.Brightness = 0.1
+cc.Contrast = 0.25
+cc.Saturation = -0.3
+cc.TintColor = Color3.new(1, 0.921569, 0.796078)
+
+-- Bloom (disabled)
+local bloom = lg:FindFirstChildOfClass("BloomEffect") or Instance.new("BloomEffect", lg)
+bloom.Enabled = false
+bloom.Intensity = 1
+bloom.Size = 0
+bloom.Threshold = 0
+
+-- Blur (disabled)
+local blur = lg:FindFirstChildOfClass("BlurEffect") or Instance.new("BlurEffect", lg)
+blur.Enabled = false
+blur.Size = 8.96
+
+-- Depth of Field
+local dof = lg:FindFirstChildOfClass("DepthOfFieldEffect") or Instance.new("DepthOfFieldEffect", lg)
+dof.Enabled = true
+dof.FarIntensity = 0.217
+dof.FocusDistance = 21.54
+dof.InFocusRadius = 16.77
+dof.NearIntensity = 0.277
+
+-- Sun Rays
+local sray = lg:FindFirstChildOfClass("SunRaysEffect") or Instance.new("SunRaysEffect", lg)
+sray.Enabled = true
+sray.Intensity = 0.16
+sray.Spread = 0.8
+
+-- Clouds
+local clouds = terr:FindFirstChildOfClass("Clouds") or Instance.new("Clouds", terr)
+clouds.Cover = 0.255
+clouds.Density = 0.143
+clouds.Color = Color3.new(0.780392, 0.686275, 0.65098)
+
+-- Water
+terr.WaterReflectance = 0.2
+
+-- Lock lighting instantly on any change
+lg:GetPropertyChangedSignal("ClockTime"):Connect(function()
+    lg.ClockTime = 16
+end)
+lg:GetPropertyChangedSignal("Ambient"):Connect(function()
+    lg.Ambient = Color3.new(0.08, 0.08, 0.08)
+end)
+lg:GetPropertyChangedSignal("OutdoorAmbient"):Connect(function()
+    lg.OutdoorAmbient = Color3.new(0.12, 0.10, 0.09)
+end)
+lg:GetPropertyChangedSignal("Brightness"):Connect(function()
+    lg.Brightness = 1.15
+end)
+lg:GetPropertyChangedSignal("ExposureCompensation"):Connect(function()
+    lg.ExposureCompensation = 0.5
+end)
+lg:GetPropertyChangedSignal("ColorShift_Top"):Connect(function()
+    lg.ColorShift_Top = Color3.new(1, 0.968627, 0.929412)
+end)
+lg:GetPropertyChangedSignal("ColorShift_Bottom"):Connect(function()
+    lg.ColorShift_Bottom = Color3.new(0, 0, 0)
+end)
+lg:GetPropertyChangedSignal("EnvironmentDiffuseScale"):Connect(function()
+    lg.EnvironmentDiffuseScale = 0.1203
+end)
+lg:GetPropertyChangedSignal("EnvironmentSpecularScale"):Connect(function()
+    lg.EnvironmentSpecularScale = 0.1215
+end)
+
+-- Material overhaul helpers
+local glassMaterials = {
+    Enum.Material.Concrete,
+    Enum.Material.Brick,
+    Enum.Material.Plaster,
+    Enum.Material.Pavement,
+    Enum.Material.Wood,
+}
+
+local function isGlassMaterial(material)
+    for _, m in pairs(glassMaterials) do
+        if material == m then return true end
+    end
+    return false
+end
+
+local function isCharacterPart(part)
+    for _, player in pairs(Players:GetPlayers()) do
+        if player.Character and part:IsDescendantOf(player.Character) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Apply reflectance + material overhaul to a single part
+local function applyTopart(v)
+    if not v:IsA("BasePart") or isCharacterPart(v) then return end
+
+    if isGlassMaterial(v.Material) then
+        v.Material = Enum.Material.Glass
+        v.Reflectance = 0.5
+    elseif v.Material == Enum.Material.Carpet then
+        v.Material = Enum.Material.Glass
+        v.Reflectance = 0.3
+    elseif v.Material == Enum.Material.Plastic and v.Transparency == 0 then
+        v.Transparency = random:NextNumber(0.1, 0.3)
+    else
+        v.Reflectance = 0.3
+    end
+end
+
+-- Apply to all existing parts
+local count = 0
+for _, v in pairs(ws:GetDescendants()) do
+    if v:IsA("BasePart") and not isCharacterPart(v) then
+        applyTopart(v)
+        count += 1
+    end
+end
+print("Done. Changed " .. count .. " parts.")
+
+-- Apply to new parts as they're added
+ws.DescendantAdded:Connect(function(v)
+    task.wait()
+    applyTopart(v)
+end)
+
+-- Reapply to world (not character) when character respawns
+localPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    for _, v in pairs(ws:GetDescendants()) do
+        if v:IsA("BasePart") and not isCharacterPart(v) then
+            applyTopart(v)
+        end
+    end
+end)
+
+print("Evening shader applied.")
