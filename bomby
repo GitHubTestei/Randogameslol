@@ -572,29 +572,16 @@ local function toggleFly()
     end
 end
 
--- Loop-teleport opponent holding the bomb, sweeping 0.05s between facing in and out of your hitbox, strictly opponents only
+-- Opponent-Only Bomb Steal: Sweeps only opponents holding the bomb, completely ignoring teammates
 local function triggerBombSteal()
     if not isInGame then return end
     if isStealingActive then return end
 
+    -- Do not run if you already have the bomb tool
     if hasBombTool() then
         lastTargetId = nil
         lastStolenSessionKey = nil
         return
-    end
-
-    local teamesSource = next(currentTeammates) and currentTeammates or lastLoggedTeammates
-    for tid, _ in pairs(teamesSource) do
-        local teammatePlayer = Players:GetPlayerByUserId(tonumber(tid))
-        if teammatePlayer and teammatePlayer.Character then
-            for _, desc in ipairs(teammatePlayer.Character:GetDescendants()) do
-                if desc:IsA("BasePart") and desc.Name == "Handle" then
-                    lastTargetId = nil
-                    lastStolenSessionKey = nil
-                    return
-                end
-            end
-        end
     end
 
     BombTpButton.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
@@ -602,6 +589,7 @@ local function triggerBombSteal()
         BombTpButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     end)
 
+    -- Strictly use opponents source only
     local oppsSource = next(currentOpponents) and currentOpponents or lastLoggedOpponents
 
     local targetData = nil
@@ -698,42 +686,24 @@ task.spawn(function()
             lastStolenSessionKey = nil
             lastTargetId = nil
         else
-            local teamesSource = next(currentTeammates) and currentTeammates or lastLoggedTeammates
-            local teammateHasIt = false
-            for tid, _ in pairs(teamesSource) do
-                local teammatePlayer = Players:GetPlayerByUserId(tonumber(tid))
-                if teammatePlayer and teammatePlayer.Character then
-                    for _, desc in ipairs(teammatePlayer.Character:GetDescendants()) do
-                        if desc:IsA("BasePart") and desc.Name == "Handle" then
-                            teammateHasIt = true
-                            break
+            if lastTargetId then
+                local holderFound = false
+                local oppsSource = next(currentOpponents) and currentOpponents or lastLoggedOpponents
+                if oppsSource[lastTargetId] then
+                    local player = Players:GetPlayerByUserId(tonumber(lastTargetId))
+                    if player and player.Character then
+                        for _, desc in ipairs(player.Character:GetDescendants()) do
+                            if desc:IsA("BasePart") and desc.Name == "Handle" then
+                                holderFound = true
+                                break
+                            end
                         end
                     end
                 end
-            end
-            if teammateHasIt then
-                lastStolenSessionKey = nil
-                lastTargetId = nil
-            end
-        end
-
-        if lastTargetId and not hasBombTool() then
-            local holderFound = false
-            local oppsSource = next(currentOpponents) and currentOpponents or lastLoggedOpponents
-            if oppsSource[lastTargetId] then
-                local player = Players:GetPlayerByUserId(tonumber(lastTargetId))
-                if player and player.Character then
-                    for _, desc in ipairs(player.Character:GetDescendants()) do
-                        if desc:IsA("BasePart") and desc.Name == "Handle" then
-                            holderFound = true
-                            break
-                        end
-                    end
+                if not holderFound then
+                    lastTargetId = nil
+                    lastStolenSessionKey = nil
                 end
-            end
-            if not holderFound then
-                lastTargetId = nil
-                lastStolenSessionKey = nil
             end
         end
     end
