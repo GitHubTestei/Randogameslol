@@ -1,0 +1,918 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+
+local BOARD_SLOTS = {
+    ["1"] = 1, ["2"] = 1,
+    ["3"] = 2, ["4"] = 2,
+    ["5"] = 3, ["6"] = 3,
+    ["7"] = 4, ["8"] = 4
+}
+
+local currentTeammates = {}
+local currentOpponents = {}
+
+-- Persistent Cache
+local lastLoggedTeammates = {}
+local lastLoggedOpponents = {}
+
+local currentBoard = nil
+local usernameCache = {}
+local isInGame = false
+local matchHighlights = {}
+local bombHighlights = {}
+
+-- Flash & Nearest Variables
+local nearestOnlyEnabled = false
+
+-- Anti-Spam / State Tracking for Bomb Stealing
+local isStealingActive = false
+local lastTargetId = nil
+local lastStolenSessionKey = nil
+
+-- Fly & Noclip Variables
+local isFlying = false
+local flySpeed = 100
+local flyConnection = nil
+local noclipConnection = nil
+local bodyVelocity = nil
+local bodyGyro = nil
+
+-- Check if you currently have the bomb tool
+local function hasBombTool()
+    local char = LocalPlayer.Character
+    if char then
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") and tool:FindFirstChild("Handle") then
+                return true
+            end
+        end
+    end
+    local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            if tool:IsA("Tool") and tool:FindFirstChild("Handle") then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Create UI safely with fallback to PlayerGui
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "LobbyTrackerGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.DisplayOrder = 999999
+
+local success, err = pcall(function()
+    ScreenGui.Parent = CoreGui
+end)
+
+if not success or not ScreenGui.Parent then
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- Pink Floating Toggle Button on Top Right of Screen (Mobile friendly)
+local ScreenToggleBtn = Instance.new("TextButton")
+ScreenToggleBtn.Name = "ScreenToggleBtn"
+ScreenToggleBtn.Size = UDim2.new(0, 45, 0, 45)
+ScreenToggleBtn.Position = UDim2.new(1, -55, 0, 15)
+ScreenToggleBtn.BackgroundColor3 = Color3.fromRGB(255, 182, 193)
+ScreenToggleBtn.TextColor3 = Color3.fromRGB(80, 40, 50)
+ScreenToggleBtn.Text = "UI"
+ScreenToggleBtn.Font = Enum.Font.GothamBold
+ScreenToggleBtn.TextSize = 14
+ScreenToggleBtn.Active = true
+ScreenToggleBtn.Draggable = true
+ScreenToggleBtn.Parent = ScreenGui
+
+local function round(obj, r)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, r)
+    corner.Parent = obj
+end
+round(ScreenToggleBtn, 12)
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 220, 0, 465)
+MainFrame.Position = UDim2.new(0, 20, 0.3, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(255, 182, 193) -- Pink Theme
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+round(MainFrame, 14)
+
+ScreenToggleBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -10, 0, 30)
+Title.Position = UDim2.new(0, 5, 0, 0)
+Title.BackgroundTransparency = 1
+Title.TextColor3 = Color3.fromRGB(80, 40, 50)
+Title.Text = "Lobby Tracker"
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 14
+Title.Parent = MainFrame
+
+-- Flash Action Button
+local FlashButton = Instance.new("TextButton")
+FlashButton.Name = "FlashButton"
+FlashButton.Size = UDim2.new(1, -20, 0, 30)
+FlashButton.Position = UDim2.new(0, 10, 0, 38)
+FlashButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+FlashButton.TextColor3 = Color3.fromRGB(50, 50, 50)
+FlashButton.Text = "Flash (Press R)"
+FlashButton.Font = Enum.Font.GothamBold
+FlashButton.TextSize = 12
+FlashButton.Parent = MainFrame
+round(FlashButton, 8)
+
+-- Bomb Teleport Action Button
+local BombTpButton = Instance.new("TextButton")
+BombTpButton.Name = "BombTpButton"
+BombTpButton.Size = UDim2.new(1, -20, 0, 30)
+BombTpButton.Position = UDim2.new(0, 10, 0, 74)
+BombTpButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+BombTpButton.TextColor3 = Color3.fromRGB(50, 50, 50)
+BombTpButton.Text = "Steal Bomb (Press T)"
+BombTpButton.Font = Enum.Font.GothamBold
+BombTpButton.TextSize = 12
+BombTpButton.Parent = MainFrame
+round(BombTpButton, 8)
+
+-- Fly Action Button
+local FlyButton = Instance.new("TextButton")
+FlyButton.Name = "FlyButton"
+FlyButton.Size = UDim2.new(1, -20, 0, 30)
+FlyButton.Position = UDim2.new(0, 10, 0, 110)
+FlyButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+FlyButton.TextColor3 = Color3.fromRGB(50, 50, 50)
+FlyButton.Text = "Fly: off (Press E)"
+FlyButton.Font = Enum.Font.GothamBold
+FlyButton.TextSize = 12
+FlyButton.Parent = MainFrame
+round(FlyButton, 8)
+
+-- Fly Speed TextBox
+local SpeedBox = Instance.new("TextBox")
+SpeedBox.Name = "SpeedBox"
+SpeedBox.Size = UDim2.new(1, -20, 0, 24)
+SpeedBox.Position = UDim2.new(0, 10, 0, 146)
+SpeedBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+SpeedBox.TextColor3 = Color3.fromRGB(50, 50, 50)
+SpeedBox.Text = "100"
+SpeedBox.PlaceholderText = "Fly Speed (Default 100)"
+SpeedBox.Font = Enum.Font.GothamBold
+SpeedBox.TextSize = 11
+SpeedBox.ClearTextOnFocus = false
+SpeedBox.Parent = MainFrame
+round(SpeedBox, 6)
+
+SpeedBox.FocusLost:Connect(function()
+    local val = tonumber(SpeedBox.Text)
+    if val then
+        flySpeed = math.clamp(val, 1, 500)
+        SpeedBox.Text = tostring(flySpeed)
+    else
+        SpeedBox.Text = tostring(flySpeed)
+    end
+end)
+
+-- Nearest On/Off Toggle Button
+local NearestToggleBtn = Instance.new("TextButton")
+NearestToggleBtn.Name = "NearestToggleBtn"
+NearestToggleBtn.Size = UDim2.new(1, -20, 0, 24)
+NearestToggleBtn.Position = UDim2.new(0, 10, 0, 176)
+NearestToggleBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+NearestToggleBtn.TextColor3 = Color3.fromRGB(50, 50, 50)
+NearestToggleBtn.Text = "Nearest: off"
+NearestToggleBtn.Font = Enum.Font.GothamBold
+NearestToggleBtn.TextSize = 11
+NearestToggleBtn.Parent = MainFrame
+round(NearestToggleBtn, 6)
+
+local ListFrame = Instance.new("ScrollingFrame")
+ListFrame.Size = UDim2.new(1, -10, 1, -210)
+ListFrame.Position = UDim2.new(0, 5, 0, 205)
+ListFrame.BackgroundTransparency = 1
+ListFrame.BorderSizePixel = 0
+ListFrame.ScrollBarThickness = 4
+ListFrame.Parent = MainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 5)
+UIListLayout.Parent = ListFrame
+
+local function getUserIdFromImage(imageString)
+    if not imageString or imageString == "" then return nil end
+    return string.match(imageString, "id=(%d+)")
+end
+
+local function getUserImageFromSlot(surfaceGui, padNum, slotNum)
+    if not surfaceGui then return nil, false end
+    local firstFrame = surfaceGui:FindFirstChild("Frame")
+    if not firstFrame then return nil, false end
+    local padFrame = firstFrame:FindFirstChild(tostring(padNum))
+    if not padFrame then return nil, false end
+    local secondFrame = padFrame:FindFirstChild("Frame")
+    if not secondFrame then return nil, false end
+    local slotFrame = secondFrame:FindFirstChild(tostring(slotNum))
+    if not slotFrame then return nil, false end
+    
+    local userImg = slotFrame:FindFirstChild("User")
+    if userImg and userImg:IsA("ImageLabel") then
+        local isActuallyVisible = slotFrame.Visible and userImg.Visible and (userImg.Image ~= "") and (userImg.ImageTransparency < 0.3)
+        return userImg.Image, isActuallyVisible
+    end
+    return nil, false
+end
+
+local function getUsername(userId)
+    if usernameCache[userId] then return usernameCache[userId] end
+    local success, name = pcall(function() return Players:GetNameFromUserIdAsync(tonumber(userId)) end)
+    if success and name then
+        usernameCache[userId] = name
+        return name
+    end
+    return "User_" .. tostring(userId)
+end
+
+local function createListLabel(text, color)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 0, 20)
+    lbl.BackgroundTransparency = 1
+    lbl.TextColor3 = color
+    lbl.Text = text
+    lbl.Font = Enum.Font.GothamSemibold
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = ListFrame
+    return lbl
+end
+
+local function updateUI()
+    for _, child in ipairs(ListFrame:GetChildren()) do
+        if child:IsA("TextLabel") then child:Destroy() end
+    end
+    
+    if isInGame then
+        Title.Text = "Status: IN-GAME"
+        createListLabel(" [ Teammates ]", Color3.fromRGB(0, 180, 80))
+        for id,_ in pairs(currentTeammates) do
+            createListLabel("  " .. getUsername(id), Color3.fromRGB(255, 255, 255))
+        end
+        createListLabel("", Color3.fromRGB(0,0,0))
+        createListLabel(" [ Opponents ]", Color3.fromRGB(220, 50, 50))
+        for id,_ in pairs(currentOpponents) do
+            createListLabel("  " .. getUsername(id), Color3.fromRGB(255, 255, 255))
+        end
+        ListFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 10)
+        return
+    end
+
+    if not currentBoard then
+        createListLabel(" Waiting on a pad...", Color3.fromRGB(100, 50, 60))
+        Title.Text = "Lobby Tracker (Idle)"
+        return
+    end
+
+    Title.Text = "Board: " .. tostring(currentBoard)
+    
+    createListLabel(" [ Teammates ]", Color3.fromRGB(0, 180, 80))
+    local hasTeammates = false
+    for id, _ in pairs(currentTeammates) do
+        hasTeammates = true
+        createListLabel("  " .. getUsername(id), Color3.fromRGB(255, 255, 255))
+    end
+    if not hasTeammates then createListLabel("  None", Color3.fromRGB(100, 50, 60)) end
+    
+    createListLabel("", Color3.fromRGB(0,0,0))
+    
+    createListLabel(" [ Opponents ]", Color3.fromRGB(220, 50, 50))
+    local hasOpponents = false
+    for id, _ in pairs(currentOpponents) do
+        hasOpponents = true
+        createListLabel("  " .. getUsername(id), Color3.fromRGB(255, 255, 255))
+    end
+    if not hasOpponents then createListLabel("  None", Color3.fromRGB(100, 50, 60)) end
+    
+    ListFrame.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 10)
+end
+
+-- Clear ESP highlights & Bomb highlights
+local function clearHighlights()
+    for _, h in pairs(matchHighlights) do
+        if h then h:Destroy() end
+    end
+    matchHighlights = {}
+
+    for _, h in pairs(bombHighlights) do
+        if h then h:Destroy() end
+    end
+    bombHighlights = {}
+end
+
+local function updateHighlights()
+    if not isInGame then
+        clearHighlights()
+        return
+    end
+
+    local activeIds = {}
+    for id,_ in pairs(currentTeammates) do activeIds[id] = Color3.fromRGB(0, 255, 100) end
+    for id,_ in pairs(currentOpponents) do activeIds[id] = Color3.fromRGB(255, 50, 50) end
+
+    -- Player ESP Highlights
+    for id, color in pairs(activeIds) do
+        local player = Players:GetPlayerByUserId(tonumber(id))
+        if player and player.Character then
+            local hum = player.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local char = player.Character
+                local hl = matchHighlights[id]
+                if not hl or hl.Parent ~= char then
+                    if hl then hl:Destroy() end
+                    hl = Instance.new("Highlight")
+                    hl.Name = "TrackerHighlight"
+                    hl.Adornee = char
+                    hl.FillColor = color
+                    hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                    hl.FillTransparency = 0.4
+                    hl.OutlineTransparency = 0
+                    hl.Parent = char
+                    matchHighlights[id] = hl
+                else
+                    hl.FillColor = color
+                end
+            else
+                local hl = matchHighlights[id]
+                if hl then hl:Destroy() matchHighlights[id] = nil end
+            end
+        end
+    end
+
+    -- Bomb ESP Highlights (Blue for match participants only)
+    local currentMatchPlayers = {}
+    for id,_ in pairs(currentTeammates) do currentMatchPlayers[id] = true end
+    for id,_ in pairs(currentOpponents) do currentMatchPlayers[id] = true end
+
+    for _, h in pairs(bombHighlights) do if h then h:Destroy() end end
+    bombHighlights = {}
+
+    for id, _ in pairs(currentMatchPlayers) do
+        local player = Players:GetPlayerByUserId(tonumber(id))
+        if player and player.Character then
+            for _, desc in ipairs(player.Character:GetDescendants()) do
+                if desc:IsA("BasePart") and desc.Name == "Handle" then
+                    local parentModel = desc.Parent
+                    if parentModel and parentModel:IsA("Model") then
+                        local isHandleRequired = false
+                        pcall(function()
+                            if parentModel.RequireHandle == true then isHandleRequired = true end
+                        end)
+
+                        if isHandleRequired or desc then
+                            local bHL = Instance.new("Highlight")
+                            bHL.Name = "BombHighlight"
+                            bHL.Adornee = parentModel
+                            bHL.FillColor = Color3.fromRGB(0, 150, 255)
+                            bHL.OutlineColor = Color3.fromRGB(255, 255, 255)
+                            bHL.FillTransparency = 0.3
+                            bHL.OutlineTransparency = 0
+                            bHL.Parent = parentModel
+                            table.insert(bombHighlights, bHL)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function resetHitbox(p)
+    if p and p.Character then
+        local root = p.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            pcall(function()
+                root.Size = Vector3.new(2, 2, 1)
+                root.Transparency = 1
+                root.CanCollide = true
+                root.Shape = Enum.PartType.Block
+            end)
+        end
+    end
+end
+
+-- Toggle Nearest Option Button
+NearestToggleBtn.MouseButton1Click:Connect(function()
+    nearestOnlyEnabled = not nearestOnlyEnabled
+    NearestToggleBtn.Text = nearestOnlyEnabled and "Nearest: on" or "Nearest: off"
+    NearestToggleBtn.BackgroundColor3 = nearestOnlyEnabled and Color3.fromRGB(210, 210, 210) or Color3.fromRGB(255, 255, 255)
+end)
+
+-- Execute Flash Logic Function
+local function triggerFlash()
+    if not isInGame then return end
+    
+    FlashButton.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+    task.delay(0.1, function()
+        FlashButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    end)
+
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+
+    local opponentsSource = next(currentOpponents) and currentOpponents or lastLoggedOpponents
+    local targetsToFlash = {}
+
+    if nearestOnlyEnabled then
+        local nearestOpp = nil
+        local shortestDist = math.huge
+        
+        for id, _ in pairs(opponentsSource) do
+            local p = Players:GetPlayerByUserId(tonumber(id))
+            if p and p.Character then
+                local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                local root = p.Character:FindFirstChild("HumanoidRootPart")
+                if hum and hum.Health > 0 and root then
+                    local dist = (myRoot.Position - root.Position).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        nearestOpp = p
+                    end
+                end
+            end
+        end
+        
+        if nearestOpp then
+            table.insert(targetsToFlash, nearestOpp)
+        end
+    else
+        for id, _ in pairs(opponentsSource) do
+            local p = Players:GetPlayerByUserId(tonumber(id))
+            if p and p.Character then
+                local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                local root = p.Character:FindFirstChild("HumanoidRootPart")
+                if hum and hum.Health > 0 and root then
+                    table.insert(targetsToFlash, p)
+                end
+            end
+        end
+    end
+
+    for _, p in ipairs(targetsToFlash) do
+        if p.Name ~= LocalPlayer.Name then
+            pcall(function()
+                p.Character.HumanoidRootPart.Size = Vector3.new(99999, 99999, 99999)
+                p.Character.HumanoidRootPart.Transparency = 1
+                p.Character.HumanoidRootPart.BrickColor = BrickColor.new("White")
+                p.Character.HumanoidRootPart.CanCollide = false
+            end)
+        end
+    end
+
+    task.delay(0.1, function()
+        for _, p in ipairs(targetsToFlash) do
+            resetHitbox(p)
+        end
+    end)
+end
+
+-- Fly and Noclip Logic Function (Fixed mobile side-strafing inversion)
+local function toggleFly()
+    isFlying = not isFlying
+    
+    FlyButton.Text = isFlying and "Fly: on (Press E)" or "Fly: off (Press E)"
+    FlyButton.BackgroundColor3 = isFlying and Color3.fromRGB(210, 210, 210) or Color3.fromRGB(255, 255, 255)
+
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return end
+
+    if isFlying then
+        bodyVelocity = Instance.new("BodyVelocity")
+        bodyVelocity.Name = "FlyVelocity"
+        bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        bodyVelocity.Parent = hrp
+
+        bodyGyro = Instance.new("BodyGyro")
+        bodyGyro.Name = "FlyGyro"
+        bodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+        bodyGyro.CFrame = hrp.CFrame
+        bodyGyro.Parent = hrp
+
+        flyConnection = RunService.RenderStepped:Connect(function()
+            if not isFlying or not char or not hrp or not hum then return end
+            
+            hum.PlatformStand = true
+            local camera = Workspace.CurrentCamera
+            local moveDir = Vector3.new(0, 0, 0)
+            
+            -- PC Keyboard Inputs
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+                moveDir = moveDir + camera.CFrame.LookVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+                moveDir = moveDir - camera.CFrame.LookVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                moveDir = moveDir - camera.CFrame.RightVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                moveDir = moveDir + camera.CFrame.RightVector
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                moveDir = moveDir + Vector3.new(0, 1, 0)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+                moveDir = moveDir - Vector3.new(0, 1, 0)
+            end
+
+            -- Mobile Thumbstick & Jump/Freefall support (Inverted thumbstick X axis fixed)
+            local thumbstickMove = hum.MoveDirection
+            if thumbstickMove.Magnitude > 0 then
+                moveDir = moveDir - (camera.CFrame.RightVector * thumbstickMove.X) + (camera.CFrame.LookVector * thumbstickMove.Z)
+            end
+
+            if hum.Jump then
+                moveDir = moveDir + Vector3.new(0, 1, 0)
+            end
+            if hum.Sit then
+                moveDir = moveDir - Vector3.new(0, 1, 0)
+            end
+
+            bodyVelocity.Velocity = moveDir * flySpeed
+            bodyGyro.CFrame = camera.CFrame
+        end)
+
+        noclipConnection = RunService.Stepped:Connect(function()
+            if not isFlying or not char then return end
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+        end)
+    else
+        if flyConnection then flyConnection:Disconnect() flyConnection = nil end
+        if noclipConnection then noclipConnection:Disconnect() noclipConnection = nil end
+        if bodyVelocity then bodyVelocity:Destroy() bodyVelocity = nil end
+        if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
+
+        if hum then
+            hum.PlatformStand = false
+        end
+
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = true
+                end
+            end
+        end
+    end
+end
+
+-- Opponent-Only Bomb Steal: Sweeps only opponents holding the bomb, completely ignoring teammates
+local function triggerBombSteal()
+    if not isInGame then return end
+    if isStealingActive then return end
+
+    -- Do not run if you already have the bomb tool
+    if hasBombTool() then
+        lastTargetId = nil
+        lastStolenSessionKey = nil
+        return
+    end
+
+    BombTpButton.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+    task.delay(0.1, function()
+        BombTpButton.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    end)
+
+    -- Strictly use opponents source only
+    local oppsSource = next(currentOpponents) and currentOpponents or lastLoggedOpponents
+
+    local targetData = nil
+    local foundHolderId = nil
+    local currentBombHandle = nil
+
+    for id, _ in pairs(oppsSource) do
+        local player = Players:GetPlayerByUserId(tonumber(id))
+        if player and player.Character then
+            local rootPart = player.Character:FindFirstChild("HumanoidRootPart")
+            if rootPart then
+                for _, desc in ipairs(player.Character:GetDescendants()) do
+                    if desc:IsA("BasePart") and desc.Name == "Handle" then
+                        local parentModel = desc.Parent
+                        if parentModel and parentModel:IsA("Model") then
+                            local isHandleRequired = false
+                            pcall(function()
+                                if parentModel.RequireHandle == true then isHandleRequired = true end
+                            end)
+
+                            if isHandleRequired or desc then
+                                targetData = {
+                                    character = player.Character,
+                                    rootPart = rootPart,
+                                    originalCFrame = rootPart.CFrame
+                                }
+                                foundHolderId = id
+                                currentBombHandle = desc
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            if targetData then break end
+        end
+    end
+
+    if not targetData or not foundHolderId or not currentBombHandle then return end
+
+    local currentSessionKey = foundHolderId .. "_" .. tostring(currentBombHandle)
+    if lastStolenSessionKey == currentSessionKey then return end
+
+    isStealingActive = true
+    lastTargetId = foundHolderId
+    lastStolenSessionKey = currentSessionKey
+
+    task.spawn(function()
+        local startTime = tick()
+        local flipState = false
+        local lastToggle = tick()
+        
+        while not hasBombTool() and (tick() - startTime < 5) do
+            local myChar = LocalPlayer.Character
+            local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            if not myRoot then break end
+
+            if tick() - lastToggle >= 0.05 then
+                flipState = not flipState
+                lastToggle = tick()
+            end
+
+            pcall(function()
+                if flipState then
+                    local faceYouCFrame = (myRoot.CFrame * CFrame.new(-1.2, 0, 1.0)) * CFrame.Angles(0, math.pi, 0)
+                    targetData.rootPart.CFrame = faceYouCFrame
+                else
+                    local faceAwayCFrame = myRoot.CFrame * CFrame.new(-1.2, 0, 2.2)
+                    targetData.rootPart.CFrame = faceAwayCFrame
+                end
+                
+                if targetData.character:FindFirstChildOfClass("Humanoid") then
+                    targetData.character:FindFirstChildOfClass("Humanoid"):ChangeState(Enum.HumanoidStateType.GettingUp)
+                end
+            end)
+            
+            RunService.Heartbeat:Wait()
+        end
+
+        pcall(function()
+            if targetData.rootPart and targetData.rootPart.Parent then
+                targetData.rootPart.CFrame = targetData.originalCFrame
+            end
+        end)
+
+        isStealingActive = false
+    end)
+end
+
+-- Constantly check if bomb state refreshed or changed hands
+task.spawn(function()
+    while task.wait(0.2) do
+        if hasBombTool() then
+            lastStolenSessionKey = nil
+            lastTargetId = nil
+        else
+            if lastTargetId then
+                local holderFound = false
+                local oppsSource = next(currentOpponents) and currentOpponents or lastLoggedOpponents
+                if oppsSource[lastTargetId] then
+                    local player = Players:GetPlayerByUserId(tonumber(lastTargetId))
+                    if player and player.Character then
+                        for _, desc in ipairs(player.Character:GetDescendants()) do
+                            if desc:IsA("BasePart") and desc.Name == "Handle" then
+                                holderFound = true
+                                break
+                            end
+                        end
+                    end
+                end
+                if not holderFound then
+                    lastTargetId = nil
+                    lastStolenSessionKey = nil
+                end
+            end
+        end
+    end
+end)
+
+FlashButton.MouseButton1Click:Connect(triggerFlash)
+BombTpButton.MouseButton1Click:Connect(triggerBombSteal)
+FlyButton.MouseButton1Click:Connect(toggleFly)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if input.KeyCode == Enum.KeyCode.LeftControl then
+        MainFrame.Visible = not MainFrame.Visible
+        return
+    end
+
+    if gameProcessed then return end
+
+    if input.KeyCode == Enum.KeyCode.R then
+        triggerFlash()
+    elseif input.KeyCode == Enum.KeyCode.T then
+        triggerBombSteal()
+    elseif input.KeyCode == Enum.KeyCode.E then
+        toggleFly()
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    local idStr = tostring(player.UserId)
+    if currentTeammates[idStr] then
+        currentTeammates[idStr] = nil
+        updateUI()
+    end
+    if currentOpponents[idStr] then
+        currentOpponents[idStr] = nil
+        updateUI()
+    end
+    if lastLoggedTeammates[idStr] then
+        lastLoggedTeammates[idStr] = nil
+    end
+    if lastLoggedOpponents[idStr] then
+        lastLoggedOpponents[idStr] = nil
+    end
+    if lastTargetId == idStr then
+        lastTargetId = nil
+        lastStolenSessionKey = nil
+        isStealingActive = false
+    end
+end)
+
+-- Teleport & Game State Checker Loop
+local lastPos = nil
+task.spawn(function()
+    while true do
+        task.wait(1)
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            if lastPos then
+                local distMoved = (hrp.Position - lastPos).Magnitude
+                if distMoved > 900 then -- Teleported
+                    isInGame = not isInGame
+                    
+                    if isInGame then
+                        if not next(currentTeammates) and next(lastLoggedTeammates) then
+                            currentTeammates = lastLoggedTeammates
+                        end
+                        if not next(currentOpponents) and next(lastLoggedOpponents) then
+                            currentOpponents = lastLoggedOpponents
+                        end
+                    else
+                        currentTeammates = {}
+                        currentOpponents = {}
+                        currentBoard = nil
+                        clearHighlights()
+                        lastTargetId = nil
+                        lastStolenSessionKey = nil
+                        isStealingActive = false
+                    end
+                    
+                    updateUI()
+                end
+            end
+            lastPos = hrp.Position
+        end
+    end
+end)
+
+-- Main Lobby Board Scanning Loop
+local function scanLobbyBoards()
+    if isInGame then return end
+    
+    local myUserId = tostring(LocalPlayer.UserId)
+    local myChar = LocalPlayer.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    
+    local physicalLobby = workspace:FindFirstChild("_Lobby") and workspace._Lobby:FindFirstChild("_Physical")
+    if not physicalLobby then return end
+
+    local bestBoard = nil
+    local bestPad = nil
+    local shortestDistance = math.huge
+
+    for boardNum, maxSlots in pairs(BOARD_SLOTS) do
+        local boardFolder = physicalLobby:FindFirstChild(boardNum)
+        if not boardFolder then continue end
+        local boardModel = boardFolder:FindFirstChild("Board")
+        if not boardModel then continue end
+        local boardPhysicalPart = boardModel:FindFirstChild("Board")
+        if not boardPhysicalPart then continue end
+        local surfaceGui = boardPhysicalPart:FindFirstChild("SurfaceGui")
+        if not surfaceGui then continue end
+        
+        local dist = math.huge
+        if myHRP and boardPhysicalPart:IsA("BasePart") then
+            dist = (myHRP.Position - boardPhysicalPart.Position).Magnitude
+        end
+
+        for padNum = 1, 2 do
+            for slotNum = 1, maxSlots do
+                local imageStr, isVisible = getUserImageFromSlot(surfaceGui, padNum, slotNum)
+                local id = getUserIdFromImage(imageStr)
+                
+                if id == myUserId and isVisible then
+                    if dist < shortestDistance then
+                        shortestDistance = dist
+                        bestBoard = boardNum
+                        bestPad = padNum
+                    end
+                end
+            end
+        end
+    end
+
+    if shortestDistance > 45 then
+        bestBoard = nil
+        bestPad = nil
+    end
+
+    local newTeammates = {}
+    local newOpponents = {}
+
+    if bestBoard and bestPad then
+        local enemyPad = (bestPad == 1) and 2 or 1
+        local maxSlots = BOARD_SLOTS[bestBoard]
+        local surfaceGui = physicalLobby[bestBoard].Board.Board.SurfaceGui
+
+        for padNum = 1, 2 do
+            local targetTable = (padNum == bestPad) and newTeammates or newOpponents
+            for slotNum = 1, maxSlots do
+                local imageStr, isVisible = getUserImageFromSlot(surfaceGui, padNum, slotNum)
+                if isVisible then
+                    local id = getUserIdFromImage(imageStr)
+                    if id and id ~= myUserId then
+                        targetTable[id] = true
+                    end
+                end
+            end
+        end
+    end
+
+    local dataChanged = false
+    if currentBoard ~= bestBoard then dataChanged = true end
+    
+    if not dataChanged then
+        for id,_ in pairs(newTeammates) do if not currentTeammates[id] then dataChanged = true break end end
+        for id,_ in pairs(currentTeammates) do if not newTeammates[id] then dataChanged = true break end end
+        for id,_ in pairs(newOpponents) do if not currentOpponents[id] then dataChanged = true break end end
+        for id,_ in pairs(currentOpponents) do if not newOpponents[id] then dataChanged = true break end end
+    end
+
+    if dataChanged then
+        currentTeammates = newTeammates
+        currentOpponents = newOpponents
+        currentBoard = bestBoard
+        
+        if next(newTeammates) or next(newOpponents) then
+            lastLoggedTeammates = {}
+            for id,_ in pairs(newTeammates) do lastLoggedTeammates[id] = true end
+            
+            lastLoggedOpponents = {}
+            for id,_ in pairs(newOpponents) do lastLoggedOpponents[id] = true end
+        end
+        
+        updateUI()
+    end
+end
+
+updateUI()
+
+task.spawn(function()
+    while task.wait(1) do
+        scanLobbyBoards()
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    updateHighlights()
+end)
