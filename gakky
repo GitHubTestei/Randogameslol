@@ -1,0 +1,1213 @@
+if _G.AutoParryActive == nil then _G.AutoParryActive = false end
+if _G.ESPActive == nil then _G.ESPActive = false end
+if _G.ParryDelayMs == nil then _G.ParryDelayMs = 0 end
+if _G.BlockDurationMs == nil then _G.BlockDurationMs = 150 end
+if _G.ESPFrameThrottle == nil then _G.ESPFrameThrottle = 3 end
+if _G.CustomMaxZoom == nil then _G.CustomMaxZoom = 100000 end
+if _G.HealNoRenderEnabled == nil then _G.HealNoRenderEnabled = true end
+if _G.LocalHealthBarActive == nil then _G.LocalHealthBarActive = true end
+
+-- Granular ESP Configurations
+if _G.ESPBoxEnabled == nil then _G.ESPBoxEnabled = true end
+if _G.ESPNameEnabled == nil then _G.ESPNameEnabled = true end
+if _G.ESPHealthEnabled == nil then _G.ESPHealthEnabled = true end
+
+if _G.CurrentThemeColor == nil then _G.CurrentThemeColor = Color3.fromRGB(0, 120, 255) end
+if _G.CurrentBgColor == nil then _G.CurrentBgColor = Color3.fromRGB(245, 245, 250) end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
+local TeleportService = game:GetService("TeleportService")
+local LocalPlayer = Players.LocalPlayer
+
+-- Cleanup previous executions
+if _G.AutoParryConnection then _G.AutoParryConnection:Disconnect() _G.AutoParryConnection = nil end
+if _G.ESPConnection then _G.ESPConnection:Disconnect() _G.ESPConnection = nil end
+if _G.ESPRefreshConnection then _G.ESPRefreshConnection:Disconnect() _G.ESPRefreshConnection = nil end
+if _G.NetworkParryConnection then _G.NetworkParryConnection:Disconnect() _G.NetworkParryConnection = nil end
+if _G.ZoomConnection then _G.ZoomConnection:Disconnect() _G.ZoomConnection = nil end
+if _G.AutoParryUI then _G.AutoParryUI:Destroy() _G.AutoParryUI = nil end
+if _G.UIKeyConnection then _G.UIKeyConnection:Disconnect() _G.UIKeyConnection = nil end
+
+if CoreGui:FindFirstChild("OptimizedHubESPFolder") then CoreGui.OptimizedHubESPFolder:Destroy() end
+local ESPFolder = Instance.new("Folder")
+ESPFolder.Name = "OptimizedHubESPFolder"
+ESPFolder.Parent = CoreGui
+
+local StyleTimings = {
+    Akari = { delay = 0.24, cooldown = 0.20 },
+    Heavy = { delay = 0.25, cooldown = 0.35 },
+    Boxing = { delay = 0.70, cooldown = 0.20 },
+    Fast = { delay = 0.00, cooldown = 0.05 },
+    Default = { delay = 0.20, cooldown = 0.20 }
+}
+
+local PlayerCache = {}
+local function UpdatePlayerCache()
+    table.clear(PlayerCache)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then table.insert(PlayerCache, p) end
+    end
+end
+Players.PlayerAdded:Connect(UpdatePlayerCache)
+Players.PlayerRemoving:Connect(UpdatePlayerCache)
+UpdatePlayerCache()
+
+local function CreateSectionLabel(parent, text, yPos)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -20, 0, 24)
+    lbl.Position = UDim2.new(0, 10, 0, yPos)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text:upper()
+    lbl.TextColor3 = Color3.fromRGB(60, 60, 70)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = parent
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 0.5
+    stroke.Color = Color3.fromRGB(200, 200, 210)
+    stroke.Transparency = 0.5
+    stroke.Parent = lbl
+    
+    return lbl
+end
+
+-- === MAIN INTERFACE ===
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "OptimizedParryUI"
+ScreenGui.Parent = CoreGui
+ScreenGui.ResetOnSpawn = false
+_G.AutoParryUI = ScreenGui
+
+-- Mobile Open/Close Button (Top Right Corner)
+local MobileToggleBtn = Instance.new("TextButton")
+MobileToggleBtn.Name = "MobileToggleBtn"
+MobileToggleBtn.Size = UDim2.new(0, 44, 0, 44)
+MobileToggleBtn.Position = UDim2.new(1, -54, 0, 10)
+MobileToggleBtn.BackgroundColor3 = _G.CurrentThemeColor
+MobileToggleBtn.Text = "UI"
+MobileToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MobileToggleBtn.Font = Enum.Font.GothamBold
+MobileToggleBtn.TextSize = 12
+MobileToggleBtn.Parent = ScreenGui
+
+local mobileCorner = Instance.new("UICorner")
+mobileCorner.CornerRadius = UDim.new(0, 8)
+mobileCorner.Parent = MobileToggleBtn
+
+-- === LOCAL PLAYER HEALTHBAR (Top Right, Under UI Button) ===
+local LocalHealthBarFrame = Instance.new("Frame")
+LocalHealthBarFrame.Name = "LocalHealthBarFrame"
+LocalHealthBarFrame.Size = UDim2.new(0, 120, 0, 18)
+LocalHealthBarFrame.Position = UDim2.new(1, -130, 0, 60)
+LocalHealthBarFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+LocalHealthBarFrame.BorderSizePixel = 0
+LocalHealthBarFrame.Visible = _G.LocalHealthBarActive
+LocalHealthBarFrame.Parent = ScreenGui
+
+local lhbCorner = Instance.new("UICorner")
+lhbCorner.CornerRadius = UDim.new(0, 4)
+lhbCorner.Parent = LocalHealthBarFrame
+
+local lhbStroke = Instance.new("UIStroke")
+lhbStroke.Thickness = 1
+lhbStroke.Color = _G.CurrentThemeColor
+lhbStroke.Parent = LocalHealthBarFrame
+
+local LocalHealthBarFill = Instance.new("Frame")
+LocalHealthBarFill.Name = "Fill"
+LocalHealthBarFill.Size = UDim2.new(1, 0, 1, 0)
+LocalHealthBarFill.BackgroundColor3 = _G.CurrentThemeColor
+LocalHealthBarFill.BorderSizePixel = 0
+LocalHealthBarFill.Parent = LocalHealthBarFrame
+
+local lhbFillCorner = Instance.new("UICorner")
+lhbFillCorner.CornerRadius = UDim.new(0, 4)
+lhbFillCorner.Parent = LocalHealthBarFill
+
+local LocalHealthBarText = Instance.new("TextLabel")
+LocalHealthBarText.Name = "Text"
+LocalHealthBarText.Size = UDim2.new(1, 0, 1, 0)
+LocalHealthBarText.BackgroundTransparency = 1
+LocalHealthBarText.Font = Enum.Font.GothamBold
+LocalHealthBarText.TextSize = 10
+LocalHealthBarText.TextColor3 = Color3.fromRGB(255, 255, 255)
+LocalHealthBarText.Text = "100 / 100"
+LocalHealthBarText.Parent = LocalHealthBarFrame
+
+RunService.RenderStepped:Connect(function()
+    if _G.LocalHealthBarActive then
+        local char = LocalPlayer.Character
+        if char then
+            local humanoid = char:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                local health = math.clamp(humanoid.Health, 0, humanoid.MaxHealth)
+                local maxHealth = humanoid.MaxHealth
+                local ratio = maxHealth > 0 and (health / maxHealth) or 0
+                LocalHealthBarFill.Size = UDim2.new(ratio, 0, 1, 0)
+                LocalHealthBarText.Text = math.ceil(health) .. " / " .. math.ceil(maxHealth)
+                LocalHealthBarFrame.Visible = true
+            else
+                LocalHealthBarFrame.Visible = false
+            end
+        else
+            LocalHealthBarFrame.Visible = false
+        end
+    else
+        LocalHealthBarFrame.Visible = false
+    end
+end)
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 480, 0, 360)
+MainFrame.Position = UDim2.new(0.5, -240, 0.4, -180)
+MainFrame.BackgroundColor3 = _G.CurrentBgColor
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Parent = ScreenGui
+
+MobileToggleBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+local dragToggle, dragStart, startPos
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragToggle = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragToggle = false end
+        end)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and dragToggle then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 6)
+MainCorner.Parent = MainFrame
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Thickness = 1
+MainStroke.Color = Color3.fromRGB(210, 210, 220)
+MainStroke.Parent = MainFrame
+
+local TopBar = Instance.new("Frame")
+TopBar.Name = "TopBar"
+TopBar.Size = UDim2.new(1, 0, 0, 36)
+TopBar.BackgroundColor3 = Color3.fromRGB(235, 235, 240)
+TopBar.BorderSizePixel = 0
+TopBar.Parent = MainFrame
+
+local TopBarCorner = Instance.new("UICorner")
+TopBarCorner.CornerRadius = UDim.new(0, 6)
+TopBarCorner.Parent = TopBar
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(1, -15, 1, 0)
+TitleLabel.Position = UDim2.new(0, 15, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = ">.<"
+TitleLabel.TextColor3 = Color3.fromRGB(0, 120, 255)
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 13
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.Parent = TopBar
+
+local Sidebar = Instance.new("Frame")
+Sidebar.Name = "Sidebar"
+Sidebar.Size = UDim2.new(0, 130, 1, -36)
+Sidebar.Position = UDim2.new(0, 0, 0, 36)
+Sidebar.BackgroundColor3 = Color3.fromRGB(235, 235, 240)
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = MainFrame
+
+local SidebarLine = Instance.new("Frame")
+SidebarLine.Size = UDim2.new(0, 1, 1, 0)
+SidebarLine.Position = UDim2.new(1, -1, 0, 0)
+SidebarLine.BackgroundColor3 = Color3.fromRGB(215, 215, 225)
+SidebarLine.BorderSizePixel = 0
+SidebarLine.Parent = Sidebar
+
+local Pages = {}
+local function CreatePage(name)
+    local PageFrame = Instance.new("ScrollingFrame")
+    PageFrame.Name = name .. "Page"
+    PageFrame.Size = UDim2.new(1, -130, 1, -36)
+    PageFrame.Position = UDim2.new(0, 130, 0, 36)
+    PageFrame.BackgroundTransparency = 1
+    PageFrame.BorderSizePixel = 0
+    PageFrame.ScrollBarThickness = 2
+    PageFrame.ScrollBarImageColor3 = _G.CurrentThemeColor
+    PageFrame.CanvasSize = UDim2.new(0, 0, 0, 380)
+    PageFrame.Visible = false
+    PageFrame.Parent = MainFrame
+    Pages[name] = PageFrame
+    return PageFrame
+end
+
+local mainPage = CreatePage("MAIN")
+local parryPage = CreatePage("AUTO PARRY")
+local visualsPage = CreatePage("VISUALS")
+local miscPage = CreatePage("MISC")
+local unloadPage = CreatePage("UNLOAD SCRIPT")
+
+local UpdateUI
+
+-- === MAIN TAB ===
+CreateSectionLabel(mainPage, "Performance Options", 10)
+
+local ThrottleLabel = Instance.new("TextLabel")
+ThrottleLabel.Size = UDim2.new(0.6, 0, 0, 22)
+ThrottleLabel.Position = UDim2.new(0, 10, 0, 40)
+ThrottleLabel.BackgroundTransparency = 1
+ThrottleLabel.Text = "ESP Frame Rate:"
+ThrottleLabel.TextColor3 = Color3.fromRGB(90, 90, 100)
+ThrottleLabel.Font = Enum.Font.GothamMedium
+ThrottleLabel.TextSize = 10
+ThrottleLabel.TextXAlignment = Enum.TextXAlignment.Left
+ThrottleLabel.Parent = mainPage
+
+local ThrottleBtn = Instance.new("TextButton")
+ThrottleBtn.Size = UDim2.new(0.35, 0, 0, 26)
+ThrottleBtn.Position = UDim2.new(0.63, 0, 0, 38)
+ThrottleBtn.BackgroundColor3 = Color3.fromRGB(225, 225, 230)
+ThrottleBtn.TextColor3 = Color3.fromRGB(50, 50, 60)
+ThrottleBtn.Font = Enum.Font.GothamBold
+ThrottleBtn.TextSize = 10
+ThrottleBtn.Text = tostring(_G.ESPFrameThrottle) .. " Frames"
+ThrottleBtn.Parent = mainPage
+local ThrottleCorner = Instance.new("UICorner")
+ThrottleCorner.CornerRadius = UDim.new(0, 4)
+ThrottleCorner.Parent = ThrottleBtn
+
+ThrottleBtn.MouseButton1Click:Connect(function()
+    if _G.ESPFrameThrottle == 1 then _G.ESPFrameThrottle = 3
+    elseif _G.ESPFrameThrottle == 3 then _G.ESPFrameThrottle = 5
+    elseif _G.ESPFrameThrottle == 5 then _G.ESPFrameThrottle = 10
+    else _G.ESPFrameThrottle = 1 end
+    ThrottleBtn.Text = tostring(_G.ESPFrameThrottle) .. " Frames"
+end)
+
+CreateSectionLabel(mainPage, "Camera Customization", 76)
+
+local ZoomLabel = Instance.new("TextLabel")
+ZoomLabel.Size = UDim2.new(0.6, 0, 0, 22)
+ZoomLabel.Position = UDim2.new(0, 10, 0, 106)
+ZoomLabel.BackgroundTransparency = 1
+ZoomLabel.Text = "Max Zoom Distance:"
+ZoomLabel.TextColor3 = Color3.fromRGB(90, 90, 100)
+ZoomLabel.Font = Enum.Font.GothamMedium
+ZoomLabel.TextSize = 10
+ZoomLabel.TextXAlignment = Enum.TextXAlignment.Left
+ZoomLabel.Parent = mainPage
+
+local ZoomBox = Instance.new("TextBox")
+ZoomBox.Size = UDim2.new(0.35, 0, 0, 22)
+ZoomBox.Position = UDim2.new(0.63, 0, 0, 106)
+ZoomBox.BackgroundColor3 = Color3.fromRGB(230, 230, 235)
+ZoomBox.TextColor3 = Color3.fromRGB(30, 30, 40)
+ZoomBox.Text = (_G.CustomMaxZoom >= 999999) and "inf" or tostring(_G.CustomMaxZoom)
+ZoomBox.Font = Enum.Font.GothamBold
+ZoomBox.TextSize = 10
+ZoomBox.ClearTextOnFocus = false
+ZoomBox.Parent = mainPage
+local ZoomCorner = Instance.new("UICorner")
+ZoomCorner.CornerRadius = UDim.new(0, 4)
+ZoomCorner.Parent = ZoomBox
+
+ZoomBox.FocusLost:Connect(function()
+    local text = string.lower(string.gsub(ZoomBox.Text, "%s+", ""))
+    if text == "inf" or text == "infinite" then
+        _G.CustomMaxZoom = math.huge
+        ZoomBox.Text = "inf"
+    else
+        local val = tonumber(ZoomBox.Text)
+        if val then
+            _G.CustomMaxZoom = math.clamp(val, 10, 1000000)
+            ZoomBox.Text = tostring(_G.CustomMaxZoom)
+        else
+            ZoomBox.Text = (_G.CustomMaxZoom >= math.huge) and "inf" or tostring(_G.CustomMaxZoom)
+        end
+    end
+    if LocalPlayer then
+        LocalPlayer.CameraMaxZoomDistance = _G.CustomMaxZoom
+    end
+end)
+
+-- === HEAL FEATURE & KEYBIND ===
+CreateSectionLabel(mainPage, "Healing", 142)
+
+local HealStatusText = Instance.new("TextLabel")
+HealStatusText.Size = UDim2.new(0, 600, 0, 80)
+HealStatusText.AnchorPoint = Vector2.new(0.5, 0.5)
+HealStatusText.Position = UDim2.new(0.5, 0, 0.5, 0)
+HealStatusText.BackgroundTransparency = 1
+HealStatusText.Text = "attempting to heal"
+HealStatusText.TextColor3 = Color3.fromRGB(0, 162, 255)
+HealStatusText.Font = Enum.Font.GothamBold
+HealStatusText.TextSize = 36
+HealStatusText.Visible = false
+HealStatusText.Parent = ScreenGui
+
+local isTestFixRunning = false
+local boundHealKey = nil
+local isBindingHealKey = false
+
+local function FindObjectNearby()
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local name = string.lower(obj.Name)
+            if string.find(name, "chair") or string.find(name, "cube_006") or string.find(name, "cube_003") then
+                if (obj.Position - root.Position).Magnitude <= 15 then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local flying = false
+local flyConnection
+
+local function ToggleFly(enable)
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+
+    if enable and not flying then
+        flying = true
+        hum.PlatformStand = true
+        
+        local bv = Instance.new("BodyVelocity")
+        bv.Name = "IYFlyVelocity"
+        bv.Parent = root
+        bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        bv.Velocity = Vector3.new(0, 0, 0)
+
+        local bg = Instance.new("BodyGyro")
+        bg.Name = "IYFlyGyro"
+        bg.Parent = root
+        bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        bg.CFrame = root.CFrame
+
+        flyConnection = RunService.RenderStepped:Connect(function()
+            if not flying or not root or not hum then return end
+            bv.Velocity = Vector3.new(0, 0, 0)
+            bg.CFrame = workspace.CurrentCamera.CFrame
+        end)
+    elseif not enable and flying then
+        flying = false
+        if flyConnection then flyConnection:Disconnect() end
+        if root:FindFirstChild("IYFlyVelocity") then root.IYFlyVelocity:Destroy() end
+        if root:FindFirstChild("IYFlyGyro") then root.IYFlyGyro:Destroy() end
+        hum.PlatformStand = false
+    end
+end
+
+local HealBtn -- forward declaration
+local function TriggerHeal()
+    if isTestFixRunning then return end
+    isTestFixRunning = true
+    if HealBtn then HealBtn.Text = "HEALING..." end
+
+    task.spawn(function()
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        
+        if not root then
+            if HealBtn then HealBtn.Text = "HEAL" end
+            isTestFixRunning = false
+            return
+        end
+
+        if _G.HealNoRenderEnabled then
+            RunService:Set3dRenderingEnabled(false)
+            HealStatusText.Visible = true
+        end
+
+        local originalCFrame = root.CFrame
+        local targetCF = CFrame.new(-58.0587349, 151.641846, 164.639557) * CFrame.fromMatrix(Vector3.zero, Vector3.new(0.11583408, 0.00236671767, 0.993265748), Vector3.new(0.978073835, 0.173973069, -0.114476942), Vector3.new(-0.173072428, 0.984747589, 0.0178371873))
+
+        root.CFrame = targetCF
+
+        local startTime = tick()
+        local finished = false
+
+        while not finished do
+            task.wait(0.2)
+            if tick() - startTime > 25 then break end
+            if FindObjectNearby() then
+                finished = true
+            end
+        end
+
+        task.wait(0.3)
+
+        local returnChar = LocalPlayer.Character
+        local returnRoot = returnChar and returnChar:FindFirstChild("HumanoidRootPart")
+        local returnHum = returnChar and returnChar:FindFirstChildOfClass("Humanoid")
+        if returnRoot then
+            if returnHum then
+                returnHum.Sit = false
+                returnHum.PlatformStand = false
+            end
+            returnRoot.CFrame = originalCFrame
+        end
+
+        ToggleFly(true)
+        task.wait(0.05)
+        ToggleFly(false)
+
+        if _G.HealNoRenderEnabled then
+            RunService:Set3dRenderingEnabled(true)
+            HealStatusText.Visible = false
+        end
+
+        if HealBtn then HealBtn.Text = "HEAL" end
+        isTestFixRunning = false
+    end)
+end
+
+-- Heal No Render Toggle Button (Blue Theme)
+local HealNoRenderBtn = Instance.new("TextButton")
+HealNoRenderBtn.Size = UDim2.new(1, -20, 0, 26)
+HealNoRenderBtn.Position = UDim2.new(0, 10, 0, 172)
+HealNoRenderBtn.BackgroundColor3 = _G.CurrentThemeColor
+HealNoRenderBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+HealNoRenderBtn.Font = Enum.Font.GothamBold
+HealNoRenderBtn.TextSize = 10
+HealNoRenderBtn.Parent = mainPage
+local hnrCorner = Instance.new("UICorner")
+hnrCorner.CornerRadius = UDim.new(0, 4)
+hnrCorner.Parent = HealNoRenderBtn
+
+local function UpdateHealNoRenderText()
+    HealNoRenderBtn.Text = "Heal No Render: " .. (_G.HealNoRenderEnabled and "ON" or "OFF")
+end
+UpdateHealNoRenderText()
+
+HealNoRenderBtn.MouseButton1Click:Connect(function()
+    _G.HealNoRenderEnabled = not _G.HealNoRenderEnabled
+    UpdateHealNoRenderText()
+end)
+
+-- Smaller width blue Heal button
+HealBtn = Instance.new("TextButton")
+HealBtn.Size = UDim2.new(0.6, -12, 0, 30)
+HealBtn.Position = UDim2.new(0, 10, 0, 204)
+HealBtn.BackgroundColor3 = _G.CurrentThemeColor
+HealBtn.Text = "HEAL"
+HealBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+HealBtn.Font = Enum.Font.GothamBold
+HealBtn.TextSize = 11
+HealBtn.Parent = mainPage
+local healCorner = Instance.new("UICorner")
+healCorner.CornerRadius = UDim.new(0, 4)
+healCorner.Parent = HealBtn
+
+HealBtn.MouseButton1Click:Connect(function()
+    TriggerHeal()
+end)
+
+-- Keybind Button placed to the right of the Heal button
+local HealKeybindBtn = Instance.new("TextButton")
+HealKeybindBtn.Size = UDim2.new(0.4, -15, 0, 30)
+HealKeybindBtn.Position = UDim2.new(0.6, 2, 0, 204)
+HealKeybindBtn.BackgroundColor3 = Color3.fromRGB(225, 225, 230)
+HealKeybindBtn.Text = "Bind Key"
+HealKeybindBtn.TextColor3 = Color3.fromRGB(50, 50, 60)
+HealKeybindBtn.Font = Enum.Font.GothamBold
+HealKeybindBtn.TextSize = 10
+HealKeybindBtn.Parent = mainPage
+local hkCorner = Instance.new("UICorner")
+hkCorner.CornerRadius = UDim.new(0, 4)
+hkCorner.Parent = HealKeybindBtn
+
+HealKeybindBtn.MouseButton1Click:Connect(function()
+    isBindingHealKey = true
+    HealKeybindBtn.Text = "Press key..."
+end)
+
+-- Fix Heal Button (Blue Theme)
+local FixHealBtn = Instance.new("TextButton")
+FixHealBtn.Size = UDim2.new(1, -20, 0, 26)
+FixHealBtn.Position = UDim2.new(0, 10, 0, 240)
+FixHealBtn.BackgroundColor3 = _G.CurrentThemeColor
+FixHealBtn.Text = "FIX HEAL (Unstick Render/Text)"
+FixHealBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+FixHealBtn.Font = Enum.Font.GothamBold
+FixHealBtn.TextSize = 10
+FixHealBtn.Parent = mainPage
+local fixCorner = Instance.new("UICorner")
+fixCorner.CornerRadius = UDim.new(0, 4)
+fixCorner.Parent = FixHealBtn
+
+FixHealBtn.MouseButton1Click:Connect(function()
+    RunService:Set3dRenderingEnabled(true)
+    HealStatusText.Visible = false
+    isTestFixRunning = false
+    
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.PlatformStand = false
+        hum.Sit = false
+    end
+    
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        if root:FindFirstChild("IYFlyVelocity") then root.IYFlyVelocity:Destroy() end
+        if root:FindFirstChild("IYFlyGyro") then root.IYFlyGyro:Destroy() end
+    end
+    
+    HealBtn.Text = "HEAL"
+end)
+
+
+-- === VISUALS TAB ===
+CreateSectionLabel(visualsPage, "Visuals", 10)
+
+local ESPButton = Instance.new("TextButton")
+ESPButton.Size = UDim2.new(1, -20, 0, 30)
+ESPButton.Position = UDim2.new(0, 10, 0, 40)
+ESPButton.BorderSizePixel = 0
+ESPButton.Font = Enum.Font.GothamBold
+ESPButton.TextSize = 11
+ESPButton.Parent = visualsPage
+local espCorner = Instance.new("UICorner")
+espCorner.CornerRadius = UDim.new(0, 4)
+espCorner.Parent = ESPButton
+
+CreateSectionLabel(visualsPage, "ESP Elements", 78)
+
+local function CreateVisualToggle(name, yPos, getterFunc, setterFunc)
+    local ToggleBtn = Instance.new("TextButton")
+    ToggleBtn.Size = UDim2.new(1, -20, 0, 26)
+    ToggleBtn.Position = UDim2.new(0, 10, 0, yPos)
+    ToggleBtn.BackgroundColor3 = Color3.fromRGB(225, 225, 230)
+    ToggleBtn.BorderSizePixel = 0
+    ToggleBtn.Font = Enum.Font.GothamMedium
+    ToggleBtn.TextSize = 10
+    ToggleBtn.TextXAlignment = Enum.TextXAlignment.Left
+    ToggleBtn.TextColor3 = Color3.fromRGB(50, 50, 60)
+    ToggleBtn.Parent = visualsPage
+    
+    local tc = Instance.new("UICorner")
+    tc.CornerRadius = UDim.new(0, 4)
+    tc.Parent = ToggleBtn
+    
+    local statusIndicator = Instance.new("Frame")
+    statusIndicator.Size = UDim2.new(0, 12, 0, 12)
+    statusIndicator.Position = UDim2.new(1, -18, 0.5, -6)
+    statusIndicator.BorderSizePixel = 0
+    statusIndicator.Parent = ToggleBtn
+    
+    local sic = Instance.new("UICorner")
+    sic.CornerRadius = UDim.new(1, 0)
+    sic.Parent = statusIndicator
+
+    local function refreshVisual()
+        local active = getterFunc()
+        ToggleBtn.Text = "  " .. name .. " : " .. (active and "ON" or "OFF")
+        statusIndicator.BackgroundColor3 = active and Color3.fromRGB(0, 200, 100) or Color3.fromRGB(200, 70, 70)
+    end
+    
+    ToggleBtn.MouseButton1Click:Connect(function()
+        setterFunc(not getterFunc())
+        refreshVisual()
+    end)
+    
+    refreshVisual()
+    return ToggleBtn
+end
+
+CreateVisualToggle("ESP Box Highlight", 108, function() return _G.ESPBoxEnabled end, function(v) _G.ESPBoxEnabled = v end)
+CreateVisualToggle("ESP Player Name", 140, function() return _G.ESPNameEnabled end, function(v) _G.ESPNameEnabled = v end)
+CreateVisualToggle("ESP Health Bar", 172, function() return _G.ESPHealthEnabled end, function(v) _G.ESPHealthEnabled = v end)
+
+ESPButton.MouseButton1Click:Connect(function() 
+    _G.ESPActive = not _G.ESPActive 
+    if not _G.ESPActive then
+        ESPFolder:ClearAllChildren()
+    end
+    if UpdateUI then UpdateUI() end
+end)
+
+-- === MISC TAB ===
+CreateSectionLabel(miscPage, "Server Operations", 10)
+
+local ServerHopBtn = Instance.new("TextButton")
+ServerHopBtn.Size = UDim2.new(1, -20, 0, 30)
+ServerHopBtn.Position = UDim2.new(0, 10, 0, 40)
+ServerHopBtn.BackgroundColor3 = _G.CurrentThemeColor
+ServerHopBtn.Text = "SERVER HOP"
+ServerHopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ServerHopBtn.Font = Enum.Font.GothamBold
+ServerHopBtn.TextSize = 11
+ServerHopBtn.Parent = miscPage
+local shCorner = Instance.new("UICorner")
+shCorner.CornerRadius = UDim.new(0, 4)
+shCorner.Parent = ServerHopBtn
+
+local RejoinBtn = Instance.new("TextButton")
+RejoinBtn.Size = UDim2.new(1, -20, 0, 30)
+RejoinBtn.Position = UDim2.new(0, 10, 0, 78)
+RejoinBtn.BackgroundColor3 = _G.CurrentThemeColor
+RejoinBtn.Text = "REJOIN"
+RejoinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+RejoinBtn.Font = Enum.Font.GothamBold
+RejoinBtn.TextSize = 11
+RejoinBtn.Parent = miscPage
+local rCorner = Instance.new("UICorner")
+rCorner.CornerRadius = UDim.new(0, 4)
+rCorner.Parent = RejoinBtn
+
+RejoinBtn.MouseButton1Click:Connect(function()
+    TeleportService:Teleport(game.PlaceId, LocalPlayer)
+end)
+
+-- Seat Desize Button in Misc Tab
+local SeatDesizeBtn = Instance.new("TextButton")
+SeatDesizeBtn.Size = UDim2.new(1, -20, 0, 30)
+SeatDesizeBtn.Position = UDim2.new(0, 10, 0, 116)
+SeatDesizeBtn.BackgroundColor3 = _G.CurrentThemeColor
+SeatDesizeBtn.Text = "Seat desize"
+SeatDesizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SeatDesizeBtn.Font = Enum.Font.GothamBold
+SeatDesizeBtn.TextSize = 11
+SeatDesizeBtn.Parent = miscPage
+local sdCorner = Instance.new("UICorner")
+sdCorner.CornerRadius = UDim.new(0, 4)
+sdCorner.Parent = SeatDesizeBtn
+
+SeatDesizeBtn.MouseButton1Click:Connect(function()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj.Name == "Seat" and obj:IsA("BasePart") then
+            obj.Size = Vector3.new(0.0001, 0.0001, 0.0001)
+        end
+    end
+    SeatDesizeBtn.Text = "Seat desize (Done!)"
+    task.delay(1.5, function()
+        SeatDesizeBtn.Text = "Seat desize"
+    end)
+end)
+
+-- === LOCAL HEALTHBAR TOGGLE (Misc Tab) ===
+local LocalHealthBarToggleBtn = Instance.new("TextButton")
+LocalHealthBarToggleBtn.Size = UDim2.new(1, -20, 0, 30)
+LocalHealthBarToggleBtn.Position = UDim2.new(0, 10, 0, 154)
+LocalHealthBarToggleBtn.BackgroundColor3 = _G.CurrentThemeColor
+LocalHealthBarToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+LocalHealthBarToggleBtn.Font = Enum.Font.GothamBold
+LocalHealthBarToggleBtn.TextSize = 11
+LocalHealthBarToggleBtn.Parent = miscPage
+
+local lhbBtnCorner = Instance.new("UICorner")
+lhbBtnCorner.CornerRadius = UDim.new(0, 4)
+lhbBtnCorner.Parent = LocalHealthBarToggleBtn
+
+local function UpdateLocalHealthBarToggleText()
+    LocalHealthBarToggleBtn.Text = "Local Healthbar: " .. (_G.LocalHealthBarActive and "ON" or "OFF")
+end
+UpdateLocalHealthBarToggleText()
+
+LocalHealthBarToggleBtn.MouseButton1Click:Connect(function()
+    _G.LocalHealthBarActive = not _G.LocalHealthBarActive
+    UpdateLocalHealthBarToggleText()
+    LocalHealthBarFrame.Visible = _G.LocalHealthBarActive
+end)
+
+-- === UNLOAD SCRIPT TAB ===
+CreateSectionLabel(unloadPage, "Uninstallation", 10)
+
+local UnloadDesc = Instance.new("TextLabel")
+UnloadDesc.Size = UDim2.new(1, -20, 0, 45)
+UnloadDesc.Position = UDim2.new(0, 10, 0, 40)
+UnloadDesc.BackgroundTransparency = 1
+UnloadDesc.Text = "Click the button below to completely stop hub execution, clean up ESP, and remove the UI."
+UnloadDesc.TextColor3 = Color3.fromRGB(90, 90, 100)
+UnloadDesc.Font = Enum.Font.GothamMedium
+UnloadDesc.TextSize = 10
+UnloadDesc.TextWrapped = true
+UnloadDesc.TextXAlignment = Enum.TextXAlignment.Left
+UnloadDesc.Parent = unloadPage
+
+-- Unload Button (Blue Theme)
+local UnloadButton = Instance.new("TextButton")
+UnloadButton.Name = "UnloadButton"
+UnloadButton.Size = UDim2.new(1, -20, 0, 32)
+UnloadButton.Position = UDim2.new(0, 10, 0, 92)
+UnloadButton.BackgroundColor3 = _G.CurrentThemeColor
+UnloadButton.BorderSizePixel = 0
+UnloadButton.Text = "UNLOAD HUB"
+UnloadButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+UnloadButton.Font = Enum.Font.GothamBold
+UnloadButton.TextSize = 11
+UnloadButton.Parent = unloadPage
+
+local UnloadCorner = Instance.new("UICorner")
+UnloadCorner.CornerRadius = UDim.new(0, 4)
+UnloadCorner.Parent = UnloadButton
+
+UnloadButton.MouseButton1Click:Connect(function()
+    _G.AutoParryActive = false
+    _G.ESPActive = false
+    if _G.AutoParryConnection then _G.AutoParryConnection:Disconnect() _G.AutoParryConnection = nil end
+    if _G.ESPConnection then _G.ESPConnection:Disconnect() _G.ESPConnection = nil end
+    if _G.ESPRefreshConnection then _G.ESPRefreshConnection:Disconnect() _G.ESPRefreshConnection = nil end
+    if _G.NetworkParryConnection then _G.NetworkParryConnection:Disconnect() _G.NetworkParryConnection = nil end
+    if _G.ZoomConnection then _G.ZoomConnection:Disconnect() _G.ZoomConnection = nil end
+    if _G.UIKeyConnection then _G.UIKeyConnection:Disconnect() _G.UIKeyConnection = nil end
+    if LocalPlayer then pcall(function() LocalPlayer.CameraMaxZoomDistance = 400 end) end
+    if ESPFolder then ESPFolder:Destroy() end
+    if ScreenGui then ScreenGui:Destroy() end
+    _G.AutoParryUI = nil
+end)
+
+-- === AUTO PARRY TAB ===
+CreateSectionLabel(parryPage, "Combat Features", 10)
+
+local StatusButton = Instance.new("TextButton")
+StatusButton.Name = "StatusButton"
+StatusButton.Size = UDim2.new(1, -20, 0, 30)
+StatusButton.Position = UDim2.new(0, 10, 0, 38)
+StatusButton.BorderSizePixel = 0
+StatusButton.Font = Enum.Font.GothamBold
+StatusButton.TextSize = 11
+StatusButton.Parent = parryPage
+local ButtonCorner = Instance.new("UICorner")
+ButtonCorner.CornerRadius = UDim.new(0, 4)
+ButtonCorner.Parent = StatusButton
+
+local DelayLabel = Instance.new("TextLabel")
+DelayLabel.Size = UDim2.new(0.6, 0, 0, 22)
+DelayLabel.Position = UDim2.new(0, 10, 0, 76)
+DelayLabel.BackgroundTransparency = 1
+DelayLabel.Text = "Parry Delay (ms):"
+DelayLabel.TextColor3 = Color3.fromRGB(90, 90, 100)
+DelayLabel.Font = Enum.Font.GothamMedium
+DelayLabel.TextSize = 10
+DelayLabel.TextXAlignment = Enum.TextXAlignment.Left
+DelayLabel.Parent = parryPage
+
+local DelayBox = Instance.new("TextBox")
+DelayBox.Size = UDim2.new(0.35, 0, 0, 22)
+DelayBox.Position = UDim2.new(0.63, 0, 0, 76)
+DelayBox.BackgroundColor3 = Color3.fromRGB(230, 230, 235)
+DelayBox.TextColor3 = Color3.fromRGB(30, 30, 40)
+DelayBox.Text = tostring(_G.ParryDelayMs)
+DelayBox.Font = Enum.Font.GothamBold
+DelayBox.TextSize = 10
+DelayBox.ClearTextOnFocus = false
+DelayBox.Parent = parryPage
+local DelayCorner = Instance.new("UICorner")
+DelayCorner.CornerRadius = UDim.new(0, 4)
+DelayCorner.Parent = DelayBox
+
+DelayBox.FocusLost:Connect(function()
+    local val = tonumber(DelayBox.Text)
+    if val then
+        _G.ParryDelayMs = math.clamp(val, 0, 5000)
+        DelayBox.Text = tostring(_G.ParryDelayMs)
+    else
+        DelayBox.Text = tostring(_G.ParryDelayMs)
+    end
+end)
+
+local DurationLabel = Instance.new("TextLabel")
+DurationLabel.Size = UDim2.new(0.6, 0, 0, 22)
+DurationLabel.Position = UDim2.new(0, 10, 0, 104)
+DurationLabel.BackgroundTransparency = 1
+DurationLabel.Text = "Block Duration (ms):"
+DurationLabel.TextColor3 = Color3.fromRGB(90, 90, 100)
+DurationLabel.Font = Enum.Font.GothamMedium
+DurationLabel.TextSize = 10
+DurationLabel.TextXAlignment = Enum.TextXAlignment.Left
+DurationLabel.Parent = parryPage
+
+local DurationBox = Instance.new("TextBox")
+DurationBox.Size = UDim2.new(0.35, 0, 0, 22)
+DurationBox.Position = UDim2.new(0.63, 0, 0, 104)
+DurationBox.BackgroundColor3 = Color3.fromRGB(230, 230, 235)
+DurationBox.TextColor3 = Color3.fromRGB(30, 30, 40)
+DurationBox.Text = tostring(_G.BlockDurationMs)
+DurationBox.Font = Enum.Font.GothamBold
+DurationBox.TextSize = 10
+DurationBox.ClearTextOnFocus = false
+DurationBox.Parent = parryPage
+local DurationCorner = Instance.new("UICorner")
+DurationCorner.CornerRadius = UDim.new(0, 4)
+DurationCorner.Parent = DurationBox
+
+DurationBox.FocusLost:Connect(function()
+    local val = tonumber(DurationBox.Text)
+    if val then
+        _G.BlockDurationMs = math.clamp(val, 10, 5000)
+        DurationBox.Text = tostring(_G.BlockDurationMs)
+    else
+        DurationBox.Text = tostring(_G.BlockDurationMs)
+    end
+end)
+
+-- Sidebar navigation creation
+local function CreateSidebarTab(tabName, i)
+    local TabButton = Instance.new("TextButton")
+    TabButton.Size = UDim2.new(1, 0, 0, 32)
+    TabButton.Position = UDim2.new(0, 0, 0, (i - 1) * 32)
+    TabButton.BackgroundTransparency = 1
+    TabButton.Text = ""
+    TabButton.Parent = Sidebar
+
+    local TabLabel = Instance.new("TextLabel")
+    TabLabel.Size = UDim2.new(1, -15, 1, 0)
+    TabLabel.Position = UDim2.new(0, 15, 0, 0)
+    TabLabel.BackgroundTransparency = 1
+    TabLabel.Text = tabName
+    TabLabel.TextColor3 = Color3.fromRGB(110, 110, 120)
+    TabLabel.Font = Enum.Font.GothamBold
+    TabLabel.TextSize = 11
+    TabLabel.Parent = TabButton
+
+    local function showPage(name)
+        for _, p in pairs(Pages) do p.Visible = false end
+        if Pages[name] then Pages[name].Visible = true end
+    end
+
+    local activeIndicator = Instance.new("Frame")
+    activeIndicator.Size = UDim2.new(0, 3, 0, 16)
+    activeIndicator.BackgroundColor3 = _G.CurrentThemeColor
+    activeIndicator.BorderSizePixel = 0
+    activeIndicator.Parent = Sidebar
+
+    if tabName == "MAIN" then
+        TabLabel.TextColor3 = Color3.fromRGB(30, 30, 40)
+        activeIndicator.Position = UDim2.new(0, 0, 0, (i - 1) * 32 + 8)
+        showPage("MAIN")
+    else
+        activeIndicator.Position = UDim2.new(0, 0, 0, (i - 1) * 32 + 8)
+        activeIndicator.Visible = false
+    end
+
+    TabButton.MouseButton1Click:Connect(function()
+        showPage(tabName)
+        for _, child in ipairs(Sidebar:GetChildren()) do
+            if child:IsA("Frame") and child ~= SidebarLine then
+                child.Visible = (child.Position.Y.Offset == (i - 1) * 32 + 8)
+            end
+        end
+        for _, child in ipairs(Sidebar:GetChildren()) do
+            if child:IsA("TextButton") then
+                local lbl = child:FindFirstChildOfClass("TextLabel")
+                if lbl then
+                    lbl.TextColor3 = (lbl.Text == tabName) and Color3.fromRGB(30, 30, 40) or Color3.fromRGB(110, 110, 120)
+                end
+            end
+        end
+    end)
+end
+
+CreateSidebarTab("MAIN", 1)
+CreateSidebarTab("AUTO PARRY", 2)
+CreateSidebarTab("VISUALS", 3)
+CreateSidebarTab("MISC", 4)
+CreateSidebarTab("UNLOAD SCRIPT", 5)
+
+UpdateUI = function()
+    if _G.AutoParryActive then
+        StatusButton.Text = "AUTO PARRY : ENABLED"
+        StatusButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        StatusButton.BackgroundColor3 = _G.CurrentThemeColor
+    else
+        StatusButton.Text = "AUTO PARRY : DISABLED"
+        StatusButton.TextColor3 = Color3.fromRGB(100, 100, 110)
+        StatusButton.BackgroundColor3 = Color3.fromRGB(220, 220, 225)
+    end
+    if _G.ESPActive then
+        ESPButton.Text = "PLAYER ESP : ENABLED"
+        ESPButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        ESPButton.BackgroundColor3 = _G.CurrentThemeColor
+    else
+        ESPButton.Text = "PLAYER ESP : DISABLED"
+        ESPButton.TextColor3 = Color3.fromRGB(100, 100, 110)
+        ESPButton.BackgroundColor3 = Color3.fromRGB(220, 220, 225)
+        ESPFolder:ClearAllChildren()
+    end
+end
+UpdateUI()
+
+-- === ESP MODULE ===
+local function ManagePlayerESP(player, character)
+    local root = character:FindFirstChild("HumanoidRootPart")
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if not root or not hum then return end
+
+    local tag = ESPFolder:FindFirstChild(player.Name)
+    if not tag then
+        tag = Instance.new("Folder")
+        tag.Name = player.Name
+        tag.Parent = ESPFolder
+
+        local high = Instance.new("Highlight")
+        high.Name = "Box"
+        high.FillTransparency = 1
+        high.OutlineColor = _G.CurrentThemeColor
+        high.OutlineTransparency = 0.2
+        high.Adornee = character
+        high.Parent = tag
+
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "Interface"
+        bb.Size = UDim2.new(0, 200, 0, 50)
+        bb.AlwaysOnTop = true
+        bb.ExtentsOffset = Vector3.new(0, 3, 0)
+        bb.Adornee = root
+        bb.Parent = tag
+
+        local nameLabel = Instance.new("TextLabel")
+        nameLabel.Name = "PlayerName"
+        nameLabel.Size = UDim2.new(1, 0, 0, 20)
+        nameLabel.BackgroundTransparency = 1
+        nameLabel.Font = Enum.Font.GothamBold
+        nameLabel.TextSize = 12
+        nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        nameLabel.TextStrokeTransparency = 0.5
+        nameLabel.Text = player.Name
+        nameLabel.Parent = bb
+
+        local healthBarBg = Instance.new("Frame")
+        healthBarBg.Name = "HealthBarBg"
+        healthBarBg.Size = UDim2.new(0, 100, 0, 6)
+        healthBarBg.Position = UDim2.new(0.5, -50, 0, 22)
+        healthBarBg.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        healthBarBg.BorderSizePixel = 0
+        healthBarBg.Parent = bb
+
+        local healthBar = Instance.new("Frame")
+        healthBar.Name = "HealthBar"
+        healthBar.Size = UDim2.new(1, 0, 1, 0)
+        healthBar.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+        healthBar.BorderSizePixel = 0
+        healthBar.Parent = healthBarBg
+    end
+
+    if tag:FindFirstChild("Box") then
+        tag.Box.Enabled = _G.ESPBoxEnabled
+        tag.Box.Adornee = character
+    end
+
+    if tag:FindFirstChild("Interface") then
+        local bb = tag.Interface
+        bb.Adornee = root
+        local nameLbl = bb:FindFirstChild("PlayerName")
+        local healthBg = bb:FindFirstChild("HealthBarBg")
+        if nameLbl then nameLbl.Visible = _G.ESPNameEnabled end
+        if healthBg then healthBg.Visible = _G.ESPHealthEnabled end
+
+        if healthBg and healthBg:FindFirstChild("HealthBar") then
+            local bar = healthBg.HealthBar
+            local percent = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+            bar.Size = UDim2.new(percent, 0, 1, 0)
+        end
+    end
+end
+
+local function FaceTarget(enemyRoot)
+    local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if myRoot and enemyRoot and UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+        myRoot.CFrame = CFrame.lookAt(myRoot.Position, Vector3.new(enemyRoot.Position.X, myRoot.Position.Y, enemyRoot.Position.Z))
+    end
+end
+
+local isResponding = false
+local function TriggerParry(timing, isCombo, enemyRoot)
+    task.spawn(function()
+        local totalDelay = timing.delay + (_G.ParryDelayMs / 1000)
+        if totalDelay > 0 then task.wait(totalDelay) end
+        
+        if _G.AutoParryActive then
+            FaceTarget(enemyRoot)
+            local dur = (_G.BlockDurationMs / 1000)
+            
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+            task.wait(dur)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+        end
+        if not isCombo then task.wait(timing.cooldown) end
+        isResponding = false
+    end)
+end
+
+local function TriggerEvade(timing, isCombo, enemyRoot)
+    task.spawn(function()
+        local totalDelay = timing.delay + (_G.ParryDelayMs / 1000)
+        if totalDelay > 0 then task.wait(totalDelay) end
+        if _G.AutoParryActive then
+            FaceTarget(enemyRoot)
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.S, false, game)
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.A, false, game)
+            task.wait(isCombo and 0.10 or timing.cooldown)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.S, false, game)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.A, false, game)
+        end
+        isResponding = false
+    end)
+end
+
+-- === NETWORK LOGIC ===
+local CombatEvent = ReplicatedStorage:FindFirstChild("Shared") and ReplicatedStorage.Shared:FindFirstChild("Network") and ReplicatedStorage.Shared.Network:FindFirstChild("CombatBroadcastURE")
+if CombatEvent then
+    _G.NetworkParryConnection = CombatEvent.OnClientEvent:Connect(function(actionType, p1, p2)
+        if not _G.AutoParryActive or isResponding then return end
+        local attackerName = tostring(p1)
+        if attackerName == LocalPlayer.Name then attackerName = tostring(p2) end
+        if attackerName == LocalPlayer.Name then return end 
+        
+        local attacker = Players:FindFirstChild(attackerName)
+        if attacker and attacker.Character then
+            local enemyRoot = attacker.Character:FindFirstChild("HumanoidRootPart")
+            local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            
+            if enemyRoot and myRoot and (enemyRoot.Position - myRoot.Position).Magnitude < 18 then
+                if actionType == "WrestlingM2SlamCrater" or actionType == "WrestlingM2GrabEnd" then
+                    isResponding = true
+                    TriggerEvade(StyleTimings.Heavy, true, enemyRoot) 
+                elseif actionType == "M2Hit" then
+                    isResponding = true
+                    TriggerEvade(StyleTimings.Heavy, false, enemyRoot)
+                end
+            end
+        end
+    end)
+end
+
+_G.AutoParryConnection = RunService.Heartbeat:Connect(function()
+    if not _G.AutoParryActive or isResponding then return end
+    local char = LocalPlayer.Character
+    local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    local myPos = myRoot.Position
+
+    local enemyNear = false
+    local isCombo = false
+    local attackType = "Default"
+    local targetEnemyRoot = nil
+
+    for i = 1, #PlayerCache do
+        local p = PlayerCache[i]
+        local enemyChar = p.Character
+        if enemyChar then
+            local enemyRoot = enemyChar:FindFirstChild("HumanoidRootPart")
+            local enemyHumanoid = enemyChar:FindFirstChildOfClass("Humanoid")
+            if enemyRoot and enemyHumanoid and enemyHumanoid.Health > 0 and (enemyRoot.Position - myPos).Magnitude < 18 then
+                local isPlayingAttackAnimation = false
+                local animator = enemyHumanoid:FindFirstChildOfClass("Animator")
+                if animator then
+                    pcall(function()
+                        local tracks = animator:GetPlayingAnimationTracks()
+                        if tracks then
+                            for j = 1, #tracks do
+                                local track = tracks[j]
+                                if track and track.Name then
+                                    local animName = track.Name:lower()
+                                    if string.find(animName, "akari") then attackType = "Akari"; isPlayingAttackAnimation = true; break
+                                    elseif string.find(animName, "boxing") or string.find(animName, "boxe") then attackType = "Boxing"; isPlayingAttackAnimation = true; break
+                                    elseif string.find(animName, "m2") or string.find(animName, "heavy") or string.find(animName, "break") then attackType = "Heavy"; isPlayingAttackAnimation = true; break
+                                    elseif string.find(animName, "fast") or string.find(animName, "fist") then attackType = "Fast"; isPlayingAttackAnimation = true; break
+                                    elseif string.find(animName, "attack") or string.find(animName, "m1") or string.find(animName, "swing") or string.find(animName, "punch") then attackType = "Default"; isPlayingAttackAnimation = true; break
+                                    end
+                                end
+                            end
+                        end
+                    end)
+                end
+
+                local genericAttack = enemyChar:GetAttribute("CombatAttacking") == true or enemyChar:GetAttribute("Attacking") == true
+                local hitting = enemyChar:GetAttribute("Combo") or enemyChar:GetAttribute("InCombo") or enemyChar:GetAttribute("IsComboing")
+                if hitting or (genericAttack and attackType == "Fast") then isCombo = true end
+
+                if isPlayingAttackAnimation or genericAttack then
+                    enemyNear = true
+                    targetEnemyRoot = enemyRoot
+                    break
+                end
+            end
+        end
+    end
+
+    if enemyNear and targetEnemyRoot then
+        isResponding = true
+        local timing = StyleTimings[attackType]
+        if attackType == "Heavy" then
+            TriggerEvade(timing, isCombo, targetEnemyRoot)
+        else
+            TriggerParry(timing, isCombo, targetEnemyRoot)
+        end
+    end
+
+    if _G.CustomMaxZoom then
+        pcall(function()
+            if LocalPlayer.CameraMaxZoomDistance ~= _G.CustomMaxZoom then
+                LocalPlayer.CameraMaxZoomDistance = _G.CustomMaxZoom
+            end
+        end)
+    end
+end)
+
+StatusButton.MouseButton1Click:Connect(function() 
+    _G.AutoParryActive = not _G.AutoParryActive 
+    UpdateUI() 
+end)
+
+_G.UIKeyConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not gameProcessed then
+        if input.KeyCode == Enum.KeyCode.RightShift then
+            MainFrame.Visible = not MainFrame.Visible
+        elseif isBindingHealKey then
+            if input.UserInputType == Enum.UserInputType.Keyboard then
+                boundHealKey = input.KeyCode
+                HealKeybindBtn.Text = input.KeyCode.Name
+                isBindingHealKey = false
+            end
+        elseif boundHealKey and input.KeyCode == boundHealKey then
+            TriggerHeal()
+        end
+    end
+end)
+
+_G.ESPRefreshConnection = task.spawn(function()
+    while true do
+        task.wait(1)
+        UpdatePlayerCache()
+        if _G.ESPActive then
+            for i = 1, #PlayerCache do
+                local p = PlayerCache[i]
+                local enemyChar = p.Character
+                if enemyChar then
+                    local enemyHumanoid = enemyChar:FindFirstChildOfClass("Humanoid")
+                    if enemyHumanoid and enemyHumanoid.Health > 0 then
+                        ManagePlayerESP(p, enemyChar)
+                    end
+                end
+            end
+        end
+    end
+end)
